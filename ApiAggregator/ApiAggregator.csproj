@@ -13,7 +13,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Features\Aggregation\DTOs\" />
     <Folder Include="Features\Aggregation\Controllers\" />
     <Folder Include="Features\Aggregation\Services\" />
   </ItemGroup>

@@ -2,5 +2,8 @@
 {
     public enum ContentCategory
     {
+        Media = 1,
+        Article = 2,
+        Repository = 3
     }
 }
