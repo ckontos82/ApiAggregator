@@ -1,5 +1,4 @@
-﻿using ApiAggregator.Features.Aggregation.Providers.GitHub.DTOs;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace ApiAggregator.Features.Aggregation.Providers.GitHub.DTOs
 {

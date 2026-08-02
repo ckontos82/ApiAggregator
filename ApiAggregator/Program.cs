@@ -1,13 +1,20 @@
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Providers.GitHub;
+using ApiAggregator.Features.Aggregation.Services;
 using Scalar.AspNetCore;
 using System.Net.Http.Headers;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter());
+    });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
@@ -25,11 +32,15 @@ builder.Services.AddHttpClient<GitHubProvider>(client =>
     client.DefaultRequestHeaders.Add(
         "X-GitHub-Api-Version",
         "2026-03-10");
+
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddScoped<IAggregationProvider>(
     serviceProvider =>
         serviceProvider.GetRequiredService<GitHubProvider>());
+
+builder.Services.AddScoped<IAggregationService, AggregationService>();
 
 var app = builder.Build();
 

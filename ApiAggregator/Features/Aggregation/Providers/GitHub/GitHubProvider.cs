@@ -2,13 +2,12 @@
 using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers.GitHub.DTOs;
 using System.Globalization;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace ApiAggregator.Features.Aggregation.Providers.GitHub
 {
     public class GitHubProvider(HttpClient httpClient) : IAggregationProvider
     {
-        public AggregationSource AggregationSource => AggregationSource.GitHub;
+        public AggregationSource Source => AggregationSource.GitHub;
 
         public ContentCategory Category => ContentCategory.Repository;
 

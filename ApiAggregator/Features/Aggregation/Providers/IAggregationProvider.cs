@@ -5,7 +5,7 @@ namespace ApiAggregator.Features.Aggregation.Providers
 {
     public interface IAggregationProvider
     {
-        AggregationSource AggregationSource { get; }
+        AggregationSource Source { get; }
         ContentCategory Category { get; }
         Task<IReadOnlyList<AggregatedItem>> SearchAsync(
             ProviderSearchRequest request,

@@ -12,9 +12,4 @@
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.17" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Features\Aggregation\Controllers\" />
-    <Folder Include="Features\Aggregation\Services\" />
-  </ItemGroup>
-
 </Project>
