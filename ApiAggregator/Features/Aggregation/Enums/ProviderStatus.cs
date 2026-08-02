@@ -2,7 +2,7 @@
 {
     public enum ProviderStatus
     {
-        Succeded = 1,
+        Succeeded = 1,
         Degraded = 2,
         Unavailable = 3
     }

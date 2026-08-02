@@ -4,6 +4,7 @@
     {
         Timestamp = 1,
         Title = 2,
-        Source = 3
+        Source = 3,
+        Category = 4
     }
 }
