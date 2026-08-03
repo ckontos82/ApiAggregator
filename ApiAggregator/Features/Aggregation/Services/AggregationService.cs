@@ -25,7 +25,11 @@ namespace ApiAggregator.Features.Aggregation.Services
             var providerResults = await Task.WhenAll(providerTasks);
 
             var aggregatedItems = providerResults
-                .SelectMany(result => result.Items)
+                .SelectMany(result => result.Items);
+
+            var filteredItems = ApplyFilters(aggregatedItems, query); 
+
+            var sortedItems = ApplySorting(filteredItems, query.SortBy, query.SortDirection)
                 .ToArray();
 
             var providerExecutions = providerResults
@@ -34,10 +38,88 @@ namespace ApiAggregator.Features.Aggregation.Services
 
             return new AggregationResponseDto
             {
-                Items = aggregatedItems,
+                Items = sortedItems,
                 Providers = providerExecutions,
-                TotalCount = aggregatedItems.Length
+                TotalCount = sortedItems.Length
             };
+        }
+
+        private static IEnumerable<AggregatedItem> ApplySorting(
+            IEnumerable<AggregatedItem> items, 
+            AggregationSortField sortBy, 
+            SortDirection sortDirection)
+        {
+            return (sortBy, sortDirection) switch
+            {
+                (AggregationSortField.Timestamp, SortDirection.Ascending) =>
+                    items.OrderBy(item => item.Timestamp),
+
+                (AggregationSortField.Timestamp, SortDirection.Descending) =>
+                    items.OrderByDescending(item => item.Timestamp),
+
+                (AggregationSortField.Title, SortDirection.Ascending) =>
+                    items.OrderBy(
+                        item => item.Title,
+                        StringComparer.OrdinalIgnoreCase),
+
+                (AggregationSortField.Title, SortDirection.Descending) =>
+                    items.OrderByDescending(
+                        item => item.Title,
+                        StringComparer.OrdinalIgnoreCase),
+
+                (AggregationSortField.Source, SortDirection.Ascending) =>
+                    items.OrderBy(
+                        item => item.Source.ToString(),
+                        StringComparer.OrdinalIgnoreCase),
+
+                (AggregationSortField.Source, SortDirection.Descending) =>
+                    items.OrderByDescending(
+                        item => item.Source.ToString(),
+                        StringComparer.OrdinalIgnoreCase),
+
+                (AggregationSortField.Category, SortDirection.Ascending) =>
+                    items.OrderBy(
+                        item => item.Category.ToString(),
+                        StringComparer.OrdinalIgnoreCase),
+
+                (AggregationSortField.Category, SortDirection.Descending) =>
+                    items.OrderByDescending(
+                        item => item.Category.ToString(),
+                        StringComparer.OrdinalIgnoreCase),
+
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(sortBy),
+                    sortBy,
+                    "The requested sorting option is unsupported.")
+            };
+        }
+
+        private static IEnumerable<AggregatedItem> ApplyFilters(IEnumerable<AggregatedItem> items, AggregationQueryDto query)
+        {
+            if (query.Category is { } category)
+            {
+                items = items
+                    .Where(item => item.Category == category);
+            }
+
+            if (query.FromDate is { } fromDate)
+            {
+                var fromTimestamp = new DateTimeOffset(fromDate.ToDateTime(TimeOnly.MinValue,DateTimeKind.Utc));
+                items = items
+                    .Where(item => item.Timestamp >= fromTimestamp);
+            }
+
+            if (query.ToDate is { } toDate)
+            {
+                var exclusiveUpperBound = new DateTimeOffset(toDate
+                        .AddDays(1)
+                        .ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+
+                items = items
+                    .Where(item => item.Timestamp < exclusiveUpperBound);
+            }
+
+            return items;
         }
 
         private IReadOnlyList<IAggregationProvider> SelectProviders(AggregationQueryDto query)
