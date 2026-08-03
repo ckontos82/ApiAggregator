@@ -1,5 +1,6 @@
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Providers.GitHub;
+using ApiAggregator.Features.Aggregation.Providers.NewsApi;
 using ApiAggregator.Features.Aggregation.Services;
 using Scalar.AspNetCore;
 using System.Net.Http.Headers;
@@ -21,24 +22,31 @@ builder.Services.AddOpenApi();
 builder.Services.AddHttpClient<GitHubProvider>(client =>
 {
     client.BaseAddress = new Uri("https://api.github.com/");
-
-    client.DefaultRequestHeaders.UserAgent.ParseAdd(
-        "ApiAggregator/1.0");
-
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
     client.DefaultRequestHeaders.Accept.Add(
-        new MediaTypeWithQualityHeaderValue(
-            "application/vnd.github+json"));
+        new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2026-03-10");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 
-    client.DefaultRequestHeaders.Add(
-        "X-GitHub-Api-Version",
-        "2026-03-10");
+var newsApiKey =
+    builder.Configuration["ExternalApis:NewsApi:ApiKey"]
+    ?? throw new InvalidOperationException(
+        "NewsAPI API key is not configured.");
 
+builder.Services.AddHttpClient<NewsApiProvider>(client =>
+{
+    client.BaseAddress = new Uri("https://newsapi.org/v2/");
+    client.DefaultRequestHeaders.Add("X-Api-Key", newsApiKey);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
     client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 builder.Services.AddScoped<IAggregationProvider>(
-    serviceProvider =>
-        serviceProvider.GetRequiredService<GitHubProvider>());
+    serviceProvider => serviceProvider.GetRequiredService<GitHubProvider>());
+
+builder.Services.AddScoped<IAggregationProvider>(
+    serviceProvider => serviceProvider.GetRequiredService<NewsApiProvider>());
 
 builder.Services.AddScoped<IAggregationService, AggregationService>();
 
