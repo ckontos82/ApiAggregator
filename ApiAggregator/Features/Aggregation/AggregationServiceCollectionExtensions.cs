@@ -1,5 +1,6 @@
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Providers.GitHub;
+using ApiAggregator.Features.Aggregation.Providers.Nasa;
 using ApiAggregator.Features.Aggregation.Providers.NewsApi;
 using ApiAggregator.Features.Aggregation.Services;
 using System.Net.Http.Headers;
@@ -16,10 +17,13 @@ public static class AggregationServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         AddGitHubProvider(services);
+        AddNasaProvider(services);
         AddNewsApiProvider(services, configuration);
 
         services.AddScoped<IAggregationProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GitHubProvider>());
+        services.AddScoped<IAggregationProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<NasaProvider>());
         services.AddScoped<IAggregationProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<NewsApiProvider>());
         services.AddScoped<IAggregationService, AggregationService>();
@@ -36,6 +40,16 @@ public static class AggregationServiceCollectionExtensions
             client.DefaultRequestHeaders.Accept.Add(
                 new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
             client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2026-03-10");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+    }
+
+    private static void AddNasaProvider(IServiceCollection services)
+    {
+        services.AddHttpClient<NasaProvider>(client =>
+        {
+            client.BaseAddress = new Uri("https://images-api.nasa.gov/");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
             client.Timeout = TimeSpan.FromSeconds(15);
         });
     }
