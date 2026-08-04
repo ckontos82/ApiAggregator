@@ -1,4 +1,6 @@
 using ApiAggregator.Features.Aggregation.Caching;
+using ApiAggregator.Features.Aggregation.Enums;
+using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Providers.GitHub;
 using ApiAggregator.Features.Aggregation.Providers.Nasa;
@@ -21,13 +23,6 @@ public static class AggregationServiceCollectionExtensions
         AddNasaProvider(services);
         AddNewsApiProvider(services, configuration);
 
-        services.AddScoped<IAggregationProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<GitHubProvider>());
-        services.AddScoped<IAggregationProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<NasaProvider>());
-        services.AddScoped<IAggregationProvider>(serviceProvider =>
-            serviceProvider.GetRequiredService<NewsApiProvider>());
-
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IProviderCache, ProviderMemoryCache>();
@@ -48,6 +43,9 @@ public static class AggregationServiceCollectionExtensions
             client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2026-03-10");
             client.Timeout = TimeSpan.FromSeconds(15);
         });
+
+        services.AddScoped<IAggregationProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<GitHubProvider>());
     }
 
     private static void AddNasaProvider(IServiceCollection services)
@@ -58,15 +56,29 @@ public static class AggregationServiceCollectionExtensions
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
             client.Timeout = TimeSpan.FromSeconds(15);
         });
+
+        services.AddScoped<IAggregationProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<NasaProvider>());
     }
 
     private static void AddNewsApiProvider(
         IServiceCollection services,
         IConfiguration configuration)
     {
-        var apiKey = configuration["ExternalApis:NewsApi:ApiKey"]
-            ?? throw new InvalidOperationException(
-                "NewsAPI API key is not configured.");
+        var apiKey = configuration["ExternalApis:NewsApi:ApiKey"];
+
+        // A missing key disables the NewsAPI provider instead of failing
+        // startup; requests targeting it are rejected with a validation error.
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            services.AddSingleton(new DisabledProvider(
+                AggregationSource.NewsApi,
+                ContentCategory.Article,
+                "NewsApi requires an API key: set the " +
+                "'ExternalApis:NewsApi:ApiKey' configuration value to enable it."));
+
+            return;
+        }
 
         services.AddHttpClient<NewsApiProvider>(client =>
         {
@@ -75,5 +87,8 @@ public static class AggregationServiceCollectionExtensions
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
             client.Timeout = TimeSpan.FromSeconds(15);
         });
+
+        services.AddScoped<IAggregationProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<NewsApiProvider>());
     }
 }

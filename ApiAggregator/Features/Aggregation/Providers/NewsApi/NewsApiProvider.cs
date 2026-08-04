@@ -28,8 +28,6 @@ namespace ApiAggregator.Features.Aggregation.Providers.NewsApi
                     response.StatusCode);
             }
 
-            response.EnsureSuccessStatusCode();
-
             var newsApiResponse = await response.Content.ReadFromJsonAsync<NewsApiSearchResponse>(cancellationToken: cancellationToken);
 
             if (newsApiResponse is null)

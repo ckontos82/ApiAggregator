@@ -8,6 +8,7 @@ namespace ApiAggregator.Features.Aggregation.Services
 {
     internal sealed class AggregationService(
         IEnumerable<IAggregationProvider> providers,
+        IEnumerable<DisabledProvider> disabledProviders,
         IProviderCache providerCache,
         ILogger<AggregationService> logger) : IAggregationService
     {
@@ -38,6 +39,7 @@ namespace ApiAggregator.Features.Aggregation.Services
 
             var providerExecutions = providerResults
                 .Select(MapProviderExecution)
+                .Concat(SelectDisabledExecutions(query))
                 .ToArray();
 
             return new AggregationResponseDto
@@ -134,6 +136,22 @@ namespace ApiAggregator.Features.Aggregation.Services
             {
                 var requestedSources = query.Sources.ToHashSet();
 
+                var unavailableSources = requestedSources
+                    .Except(providers.Select(provider => provider.Source))
+                    .ToArray();
+
+                if (unavailableSources.Length > 0)
+                {
+                    var reasons = unavailableSources.Select(source =>
+                        disabledProviders
+                            .FirstOrDefault(disabled => disabled.Source == source)
+                            ?.Reason
+                        ?? $"{source} is not available on this server.");
+
+                    throw new InvalidAggregationRequestException(
+                        string.Join(" ", reasons));
+                }
+
                 selectedProviders = selectedProviders.Where(provider =>
                     requestedSources.Contains(provider.Source));
             }
@@ -144,7 +162,19 @@ namespace ApiAggregator.Features.Aggregation.Services
                     provider.Category == category);
             }
 
-            return selectedProviders.ToArray();
+            var selection = selectedProviders.ToArray();
+
+            if (selection.Length == 0)
+            {
+                throw new InvalidAggregationRequestException(
+                    query.Sources is { Length: > 0 }
+                        ? $"None of the requested sources provide " +
+                          $"'{query.Category}' content."
+                        : $"No available source provides " +
+                          $"'{query.Category}' content.");
+            }
+
+            return selection;
         }
 
         private async Task<ProviderResult> ExecuteProviderAsync(
@@ -215,6 +245,31 @@ namespace ApiAggregator.Features.Aggregation.Services
                     provider.Source);
 
                 return CreateFailureResult(provider, cacheKey, $"{provider.Source} could not return results.");
+            }
+        }
+
+        private IEnumerable<ProviderExecutionDto> SelectDisabledExecutions(AggregationQueryDto query)
+        {
+            // Explicitly requested disabled sources were already rejected
+            // with a validation error in SelectProviders.
+            if (query.Sources is { Length: > 0 })
+                yield break;
+
+            foreach (var disabledProvider in disabledProviders)
+            {
+                if (query.Category is { } category
+                    && disabledProvider.Category != category)
+                {
+                    continue;
+                }
+
+                yield return new ProviderExecutionDto
+                {
+                    Source = disabledProvider.Source,
+                    Status = ProviderStatus.Unavailable,
+                    ItemCount = 0,
+                    ErrorMessage = disabledProvider.Reason
+                };
             }
         }
 

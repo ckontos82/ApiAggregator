@@ -15,11 +15,18 @@ namespace ApiAggregator.Features.Aggregation.Controllers
             [FromQuery] AggregationQueryDto request,
             CancellationToken cancellationToken)
         {
-            var response = await aggregationService.AggregateAsync(
-                request,
-                cancellationToken);
+            try
+            {
+                var response = await aggregationService.AggregateAsync(
+                    request,
+                    cancellationToken);
 
-            return Ok(response);
+                return Ok(response);
+            }
+            catch (InvalidAggregationRequestException exception)
+            {
+                return ValidationProblem(detail: exception.Message);
+            }
         }
     }
 }
