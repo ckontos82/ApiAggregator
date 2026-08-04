@@ -1,4 +1,5 @@
-﻿using ApiAggregator.Features.Aggregation.DTOs;
+﻿using ApiAggregator.Features.Aggregation.Caching;
+using ApiAggregator.Features.Aggregation.DTOs;
 
 namespace ApiAggregator.Features.Aggregation.Services
 {

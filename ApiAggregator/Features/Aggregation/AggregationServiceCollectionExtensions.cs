@@ -1,3 +1,4 @@
+using ApiAggregator.Features.Aggregation.Caching;
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Providers.GitHub;
 using ApiAggregator.Features.Aggregation.Providers.Nasa;
@@ -26,6 +27,11 @@ public static class AggregationServiceCollectionExtensions
             serviceProvider.GetRequiredService<NasaProvider>());
         services.AddScoped<IAggregationProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<NewsApiProvider>());
+
+        services.AddMemoryCache();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IProviderCache, ProviderMemoryCache>();
+
         services.AddScoped<IAggregationService, AggregationService>();
 
         return services;

@@ -1,11 +1,15 @@
-﻿using ApiAggregator.Features.Aggregation.DTOs;
+﻿using ApiAggregator.Features.Aggregation.Caching;
+using ApiAggregator.Features.Aggregation.DTOs;
 using ApiAggregator.Features.Aggregation.Enums;
 using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
 
 namespace ApiAggregator.Features.Aggregation.Services
 {
-    public sealed class AggregationService(IEnumerable<IAggregationProvider> providers, ILogger<AggregationService> logger) : IAggregationService
+    internal sealed class AggregationService(
+        IEnumerable<IAggregationProvider> providers,
+        IProviderCache providerCache,
+        ILogger<AggregationService> logger) : IAggregationService
     {
         public async Task<AggregationResponseDto> AggregateAsync(AggregationQueryDto query, CancellationToken cancellationToken)
         {
@@ -148,11 +152,27 @@ namespace ApiAggregator.Features.Aggregation.Services
             ProviderSearchRequest request,
             CancellationToken cancellationToken)
         {
+            var cacheKey = BuildCacheKey(provider, request);
+
+            if (providerCache.TryGetFresh(cacheKey, out var cachedEntry))
+            {
+                return new ProviderResult
+                {
+                    Source = provider.Source,
+                    Items = cachedEntry!.Items,
+                    Status = ProviderStatus.Succeeded,
+                    IsFromCache = true,
+                    IsStale = false
+                };
+            }
+
             try
             {
                 var items = await provider.SearchAsync(
                     request,
                     cancellationToken);
+
+                providerCache.Set(cacheKey, items);
 
                 return new ProviderResult
                 {
@@ -176,14 +196,7 @@ namespace ApiAggregator.Features.Aggregation.Services
                     "Provider {Provider} timed out.",
                     provider.Source);
 
-                return new ProviderResult
-                {
-                    Source = provider.Source,
-                    Items = [],
-                    Status = ProviderStatus.Unavailable,
-                    ErrorMessage =
-                        $"{provider.Source} did not respond within the allowed time."
-                };
+                return CreateFailureResult(provider, cacheKey, $"{provider.Source} did not respond within the allowed time.");
             }
             catch (HttpRequestException exception)
             {
@@ -192,14 +205,7 @@ namespace ApiAggregator.Features.Aggregation.Services
                     "HTTP request to provider {Provider} failed.",
                     provider.Source);
 
-                return new ProviderResult
-                {
-                    Source = provider.Source,
-                    Items = [],
-                    Status = ProviderStatus.Unavailable,
-                    ErrorMessage =
-                        $"{provider.Source} is temporarily unavailable."
-                };
+                return CreateFailureResult(provider, cacheKey, $"{provider.Source} is temporarily unavailable.");
             }
             catch (Exception exception)
             {
@@ -208,14 +214,7 @@ namespace ApiAggregator.Features.Aggregation.Services
                     "Unexpected error while executing provider {Provider}.",
                     provider.Source);
 
-                return new ProviderResult
-                {
-                    Source = provider.Source,
-                    Items = [],
-                    Status = ProviderStatus.Unavailable,
-                    ErrorMessage =
-                        $"{provider.Source} could not return results."
-                };
+                return CreateFailureResult(provider, cacheKey, $"{provider.Source} could not return results.");
             }
         }
 
@@ -229,6 +228,44 @@ namespace ApiAggregator.Features.Aggregation.Services
                 IsFromCache = result.IsFromCache,
                 IsStale = result.IsStale,
                 ErrorMessage = result.ErrorMessage
+            };
+        }
+
+        private static string BuildCacheKey(IAggregationProvider provider, ProviderSearchRequest request)
+        {
+            return string.Join(
+                '|',
+                provider.Source,
+                request.Query.Trim().ToUpperInvariant(),
+                request.FromDate?.ToString("yyyy-MM-dd") ?? string.Empty,
+                request.ToDate?.ToString("yyyy-MM-dd") ?? string.Empty,
+                request.ResultsLimit);
+        }
+
+        private ProviderResult CreateFailureResult(
+            IAggregationProvider provider,
+            string cacheKey,
+            string errorMessage)
+        {
+            if (providerCache.TryGetStale(cacheKey, out var staleEntry))
+            {
+                return new ProviderResult
+                {
+                    Source = provider.Source,
+                    Items = staleEntry!.Items,
+                    Status = ProviderStatus.Degraded,
+                    IsFromCache = true,
+                    IsStale = true,
+                    ErrorMessage = errorMessage
+                };
+            }
+
+            return new ProviderResult
+            {
+                Source = provider.Source,
+                Items = [],
+                Status = ProviderStatus.Unavailable,
+                ErrorMessage = errorMessage
             };
         }
     }
