@@ -5,6 +5,10 @@ using System.Globalization;
 
 namespace ApiAggregator.Features.Aggregation.Providers.Nasa;
 
+/// <summary>
+/// Searches the NASA Image and Video Library. Date filters are applied at
+/// year granularity, the finest the API supports.
+/// </summary>
 public sealed class NasaProvider(HttpClient httpClient) : IAggregationProvider
 {
     public AggregationSource Source => AggregationSource.Nasa;

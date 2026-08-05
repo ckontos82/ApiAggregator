@@ -6,6 +6,11 @@ using System.Text;
 
 namespace ApiAggregator.Features.Aggregation.Providers.NewsApi
 {
+    /// <summary>
+    /// Searches news articles via NewsAPI's /v2/everything endpoint. Item ids
+    /// are derived from a SHA-256 hash of the article URL, since NewsAPI
+    /// provides no stable identifier of its own.
+    /// </summary>
     public sealed class NewsApiProvider(HttpClient httpClient) : IAggregationProvider
     {
         public AggregationSource Source => AggregationSource.NewsApi;

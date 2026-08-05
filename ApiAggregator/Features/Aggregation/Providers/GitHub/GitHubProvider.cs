@@ -5,6 +5,10 @@ using System.Globalization;
 
 namespace ApiAggregator.Features.Aggregation.Providers.GitHub
 {
+    /// <summary>
+    /// Searches GitHub repositories via the repository search API, applying
+    /// date filters through search qualifiers (created:&gt;= / created:&lt;=).
+    /// </summary>
     public class GitHubProvider(HttpClient httpClient) : IAggregationProvider
     {
         public AggregationSource Source => AggregationSource.GitHub;
