@@ -3,6 +3,7 @@ using ApiAggregator.Features.Aggregation.DTOs;
 using ApiAggregator.Features.Aggregation.Enums;
 using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
+using ApiAggregator.Features.Aggregation.Statistics;
 
 namespace ApiAggregator.Features.Aggregation.Services
 {
@@ -10,6 +11,8 @@ namespace ApiAggregator.Features.Aggregation.Services
         IEnumerable<IAggregationProvider> providers,
         IEnumerable<DisabledProvider> disabledProviders,
         IProviderCache providerCache,
+        IProviderStatisticsCollector statisticsCollector,
+        TimeProvider timeProvider,
         ILogger<AggregationService> logger) : IAggregationService
     {
         public async Task<AggregationResponseDto> AggregateAsync(AggregationQueryDto query, CancellationToken cancellationToken)
@@ -196,11 +199,15 @@ namespace ApiAggregator.Features.Aggregation.Services
                 };
             }
 
+            var startTimestamp = timeProvider.GetTimestamp();
+
             try
             {
                 var items = await provider.SearchAsync(
                     request,
                     cancellationToken);
+
+                RecordStatistics(provider, startTimestamp, succeeded: true);
 
                 providerCache.Set(cacheKey, items);
 
@@ -219,6 +226,8 @@ namespace ApiAggregator.Features.Aggregation.Services
             }
             catch (OperationCanceledException exception)
             {
+                RecordStatistics(provider, startTimestamp, succeeded: false);
+
                 // The caller token was not cancelled, so this is treated
                 // as the provider HttpClient timeout.
                 logger.LogWarning(
@@ -230,6 +239,8 @@ namespace ApiAggregator.Features.Aggregation.Services
             }
             catch (HttpRequestException exception)
             {
+                RecordStatistics(provider, startTimestamp, succeeded: false);
+
                 logger.LogWarning(
                     exception,
                     "HTTP request to provider {Provider} failed.",
@@ -239,6 +250,8 @@ namespace ApiAggregator.Features.Aggregation.Services
             }
             catch (Exception exception)
             {
+                RecordStatistics(provider, startTimestamp, succeeded: false);
+
                 logger.LogError(
                     exception,
                     "Unexpected error while executing provider {Provider}.",
@@ -271,6 +284,17 @@ namespace ApiAggregator.Features.Aggregation.Services
                     ErrorMessage = disabledProvider.Reason
                 };
             }
+        }
+
+        private void RecordStatistics(
+            IAggregationProvider provider,
+            long startTimestamp,
+            bool succeeded)
+        {
+            statisticsCollector.Record(
+                provider.Source,
+                timeProvider.GetElapsedTime(startTimestamp),
+                succeeded);
         }
 
         private static ProviderExecutionDto MapProviderExecution(ProviderResult result)

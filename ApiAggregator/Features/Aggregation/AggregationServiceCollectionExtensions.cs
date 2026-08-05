@@ -6,12 +6,24 @@ using ApiAggregator.Features.Aggregation.Providers.GitHub;
 using ApiAggregator.Features.Aggregation.Providers.Nasa;
 using ApiAggregator.Features.Aggregation.Providers.NewsApi;
 using ApiAggregator.Features.Aggregation.Services;
+using ApiAggregator.Features.Aggregation.Statistics;
 using System.Net.Http.Headers;
 
 namespace ApiAggregator.Features.Aggregation;
 
+/// <summary>
+/// Registers everything the aggregation feature needs. Adding a new external
+/// API means implementing <see cref="Providers.IAggregationProvider"/> and
+/// registering it here (typed HttpClient + interface mapping).
+/// </summary>
 public static class AggregationServiceCollectionExtensions
 {
+    /// <summary>
+    /// Adds the aggregation providers, caching, statistics, and services.
+    /// A provider whose configuration is missing (e.g. the NewsAPI key) is
+    /// registered as a <see cref="Models.DisabledProvider"/> instead of
+    /// failing startup.
+    /// </summary>
     public static IServiceCollection AddAggregation(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -26,6 +38,7 @@ public static class AggregationServiceCollectionExtensions
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IProviderCache, ProviderMemoryCache>();
+        services.AddSingleton<IProviderStatisticsCollector, ProviderStatisticsCollector>();
 
         services.AddScoped<IAggregationService, AggregationService>();
 
