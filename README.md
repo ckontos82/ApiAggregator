@@ -15,7 +15,7 @@ sorted results in one response.
 ### Prerequisites
 
 - .NET 10 SDK
-- A [NewsAPI](https://newsapi.org) API key (optional — see below)
+- A [NewsAPI](https://newsapi.org) API key (optional, see below)
 
 ### Configure the NewsAPI key
 
@@ -26,13 +26,13 @@ not stored in the repository; for local development use user secrets:
 dotnet user-secrets set "ExternalApis:NewsApi:ApiKey" "<your-key>" --project ApiAggregator
 ```
 
-(In Visual Studio: right-click the project → *Manage User Secrets*.)
+(In Visual Studio: right-click the project and select *Manage User Secrets*.)
 
 In production, supply it via an environment variable
 (`ExternalApis__NewsApi__ApiKey`) or your secret store of choice.
 
-**If the key is missing**, the application still starts — the NewsAPI
-provider is simply disabled. Responses list it as `Unavailable` with an
+**If the key is missing**, the application still starts. The NewsAPI
+provider is simply disabled: responses list it as `Unavailable` with an
 explanatory message, and requests that explicitly ask for it return
 `400 Bad Request`. GitHub and NASA require no configuration.
 
@@ -57,13 +57,13 @@ dotnet test
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `Query` | string (required, ≤100 chars) | — | Search term sent to every provider |
+| `Query` | string (required, max 100 chars) | - | Search term sent to every provider |
 | `Sources` | array of `Nasa` \| `NewsApi` \| `GitHub` | all available | Restrict to specific providers (repeat the parameter: `Sources=GitHub&Sources=Nasa`) |
-| `Category` | `Media` \| `Article` \| `Repository` | — | Restrict to providers of one content category |
-| `FromDate` / `ToDate` | date (`yyyy-MM-dd`) | — | Inclusive date range on item timestamps |
+| `Category` | `Media` \| `Article` \| `Repository` | - | Restrict to providers of one content category |
+| `FromDate` / `ToDate` | date (`yyyy-MM-dd`) | - | Inclusive date range on item timestamps |
 | `SortBy` | `Timestamp` \| `Title` \| `Source` \| `Category` | `Timestamp` | Sort field for the merged result |
 | `SortDirection` | `Ascending` \| `Descending` | `Descending` | Sort direction |
-| `ResultsPerSource` | int 1–25 | 10 | Maximum items requested from each provider |
+| `ResultsPerSource` | int 1-25 | 10 | Maximum items requested from each provider |
 
 Example:
 
@@ -81,7 +81,7 @@ Response shape:
       "source": "Nasa",
       "category": "Media",
       "title": "Apollo 11 Mission image",
-      "description": "…",
+      "description": "...",
       "url": "https://images.nasa.gov/details/as11-40-5874",
       "timestamp": "1969-07-20T00:00:00+00:00"
     }
@@ -103,7 +103,7 @@ failures are visible even when the overall request succeeds.
 Returns in-memory request statistics for each external API: how many
 calls were made, how many succeeded or failed, the average response
 time, and a breakdown into performance buckets (fast < 100 ms, average
-100–200 ms, slow > 200 ms). Cache hits are not counted — only real
+100-200 ms, slow > 200 ms). Cache hits are not counted, only real
 external calls. Statistics reset when the application restarts.
 
 ```json
@@ -124,26 +124,27 @@ external calls. Statistics reset when the application restarts.
 The API distinguishes problems that are knowable up front from problems
 that only appear at request time:
 
-- **Configuration problems → client error.** Explicitly requesting a
-  source that is not available on the server (e.g. NewsAPI without a
-  key), or a `Sources`/`Category` combination that matches no provider,
-  returns `400` with a `ValidationProblemDetails` body explaining why.
-- **Runtime failures → graceful degradation.** A provider that times out
+- **Configuration problems result in a client error.** Explicitly
+  requesting a source that is not available on the server (e.g. NewsAPI
+  without a key), or a `Sources`/`Category` combination that matches no
+  provider, returns `400` with a `ValidationProblemDetails` body
+  explaining why.
+- **Runtime failures degrade gracefully.** A provider that times out
   (15 s per provider) or errors mid-request does not fail the response.
   It is reported in `providers` as `Unavailable` (no data) or `Degraded`
   (stale cached data was served instead), while healthy providers return
   normally.
-- **Unexpected errors → RFC 7807.** Unhandled exceptions and empty error
-  status codes (404, 405, …) are returned as `application/problem+json`
-  bodies rather than empty responses.
+- **Unexpected errors return RFC 7807 responses.** Unhandled exceptions
+  and empty error status codes (404, 405, etc.) are returned as
+  `application/problem+json` bodies rather than empty responses.
 
 ### Caching
 
 Each provider response is cached in memory per unique request
 (source + query + dates + limit):
 
-- **Fresh** for 30 seconds — served directly without calling the provider.
-- **Stale** for 30 minutes — served only as a fallback when the provider
+- **Fresh** for 30 seconds: served directly without calling the provider.
+- **Stale** for 30 minutes: served only as a fallback when the provider
   fails, marked `isFromCache: true, isStale: true` with status `Degraded`.
 
 ## Project layout
@@ -152,7 +153,7 @@ Each provider response is cached in memory per unique request
 ApiAggregator/
   Features/Aggregation/
     Controllers/     Aggregation and statistics endpoints
-    Services/        AggregationService — fan-out, merge, filter, sort
+    Services/        AggregationService (fan-out, merge, filter, sort)
     Providers/       One folder per external API (GitHub, Nasa, NewsApi)
     Caching/         Fresh/stale in-memory provider cache
     Statistics/      In-memory per-provider request statistics

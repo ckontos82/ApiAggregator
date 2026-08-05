@@ -52,9 +52,9 @@ namespace ApiAggregator.Features.Aggregation.Controllers
         /// Returns in-memory request statistics for each external API.
         /// </summary>
         /// <remarks>
-        /// Counts only real external calls — cache hits are excluded. Response
+        /// Counts only real external calls; cache hits are excluded. Response
         /// times are grouped into performance buckets: fast (&lt;100 ms),
-        /// average (100–200 ms), and slow (&gt;200 ms). Statistics reset when
+        /// average (100-200 ms), and slow (&gt;200 ms). Statistics reset when
         /// the application restarts.
         /// </remarks>
         [HttpGet("statistics")]
