@@ -15,6 +15,8 @@ builder.Services.AddControllers()
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+builder.Services.AddProblemDetails();
+
 builder.Services.AddAggregation(builder.Configuration);
 
 var app = builder.Build();
@@ -26,6 +28,15 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference(
         options => options.WithTitle("API Aggregator"));
 }
+else
+{
+    // Turns unhandled exceptions into RFC 7807 responses. In development
+    // the developer exception page (with stack traces) is used instead.
+    app.UseExceptionHandler();
+}
+
+// Gives empty error status codes (404, 405, ...) a ProblemDetails body.
+app.UseStatusCodePages();
 
 app.UseHttpsRedirection();
 

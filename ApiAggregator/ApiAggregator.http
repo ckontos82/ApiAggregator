@@ -1,6 +1,25 @@
 @ApiAggregator_HostAddress = http://localhost:5125
 
-GET {{ApiAggregator_HostAddress}}/weatherforecast/
+### Basic search across all available sources
+GET {{ApiAggregator_HostAddress}}/api/aggregation?Query=apollo
 Accept: application/json
 
-###
+### Restrict to specific sources
+GET {{ApiAggregator_HostAddress}}/api/aggregation?Query=apollo&Sources=GitHub&Sources=Nasa
+Accept: application/json
+
+### Filter by category and date range, sorted by title
+GET {{ApiAggregator_HostAddress}}/api/aggregation?Query=apollo&Category=Repository&FromDate=2024-01-01&ToDate=2026-08-01&SortBy=Title&SortDirection=Ascending
+Accept: application/json
+
+### Invalid: FromDate later than ToDate (expect 400)
+GET {{ApiAggregator_HostAddress}}/api/aggregation?Query=apollo&FromDate=2026-08-01&ToDate=2026-01-01
+Accept: application/json
+
+### Invalid: source and category that don't match (expect 400)
+GET {{ApiAggregator_HostAddress}}/api/aggregation?Query=apollo&Sources=GitHub&Category=Article
+Accept: application/json
+
+### Request statistics per external API
+GET {{ApiAggregator_HostAddress}}/api/aggregation/statistics
+Accept: application/json
