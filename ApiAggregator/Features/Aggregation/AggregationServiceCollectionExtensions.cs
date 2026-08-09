@@ -1,4 +1,5 @@
 using ApiAggregator.Features.Aggregation.Caching;
+using ApiAggregator.Features.Aggregation.Configuration;
 using ApiAggregator.Features.Aggregation.Enums;
 using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
@@ -7,17 +8,23 @@ using ApiAggregator.Features.Aggregation.Providers.Nasa;
 using ApiAggregator.Features.Aggregation.Providers.NewsApi;
 using ApiAggregator.Features.Aggregation.Services;
 using ApiAggregator.Features.Aggregation.Statistics;
+using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
 
 namespace ApiAggregator.Features.Aggregation;
 
 /// <summary>
 /// Registers everything the aggregation feature needs. Adding a new external
-/// API means implementing <see cref="Providers.IAggregationProvider"/> and
-/// registering it here (typed HttpClient + interface mapping).
+/// API means implementing <see cref="Providers.IAggregationProvider"/>, adding
+/// its <c>ExternalApis:{name}</c> configuration section, and registering it
+/// here (options + typed HttpClient + interface mapping).
 /// </summary>
 public static class AggregationServiceCollectionExtensions
 {
+    private const string GitHubOptionsName = "GitHub";
+    private const string NasaOptionsName = "Nasa";
+    private const string NewsApiOptionsName = "NewsApi";
+
     /// <summary>
     /// Adds the aggregation providers, caching, statistics, and services.
     /// A provider whose configuration is missing (e.g. the NewsAPI key) is
@@ -31,8 +38,8 @@ public static class AggregationServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        AddGitHubProvider(services);
-        AddNasaProvider(services);
+        AddGitHubProvider(services, configuration);
+        AddNasaProvider(services, configuration);
         AddNewsApiProvider(services, configuration);
 
         services.AddMemoryCache();
@@ -45,40 +52,78 @@ public static class AggregationServiceCollectionExtensions
         return services;
     }
 
-    private static void AddGitHubProvider(IServiceCollection services)
+    /// <summary>
+    /// Binds and validates one provider's HTTP settings as a named options
+    /// instance. ValidateOnStart turns a bad configuration into a startup
+    /// failure instead of a 500 on the first request.
+    /// </summary>
+    private static OptionsBuilder<ProviderHttpOptions> AddProviderOptions(
+        IServiceCollection services,
+        IConfiguration configuration,
+        string name)
     {
-        services.AddHttpClient<GitHubProvider>(client =>
+        return services
+            .AddOptions<ProviderHttpOptions>(name)
+            .Bind(configuration.GetSection($"{ProviderHttpOptions.SectionName}:{name}"))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+    }
+
+    private static ProviderHttpOptions GetOptions(IServiceProvider serviceProvider, string name)
+    {
+        return serviceProvider
+            .GetRequiredService<IOptionsMonitor<ProviderHttpOptions>>()
+            .Get(name);
+    }
+
+    /// <summary>Settings every provider shares; provider-specific headers are added by the caller.</summary>
+    private static void ApplyCommonSettings(HttpClient client, ProviderHttpOptions options)
+    {
+        client.BaseAddress = new Uri(options.BaseAddress);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
+    }
+
+    private static void AddGitHubProvider(IServiceCollection services, IConfiguration configuration)
+    {
+        AddProviderOptions(services, configuration, GitHubOptionsName);
+
+        services.AddHttpClient<GitHubProvider>((serviceProvider, client) =>
         {
-            client.BaseAddress = new Uri("https://api.github.com/");
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
+            var options = GetOptions(serviceProvider, GitHubOptionsName);
+
+            ApplyCommonSettings(client, options);
+
             client.DefaultRequestHeaders.Accept.Add(
                 new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-            client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2026-03-10");
-            client.Timeout = TimeSpan.FromSeconds(15);
+
+            if (options.ApiVersion is { } apiVersion)
+            {
+                client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", apiVersion);
+            }
         });
 
         services.AddScoped<IAggregationProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<GitHubProvider>());
     }
 
-    private static void AddNasaProvider(IServiceCollection services)
+    private static void AddNasaProvider(IServiceCollection services, IConfiguration configuration)
     {
-        services.AddHttpClient<NasaProvider>(client =>
-        {
-            client.BaseAddress = new Uri("https://images-api.nasa.gov/");
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
-            client.Timeout = TimeSpan.FromSeconds(15);
-        });
+        AddProviderOptions(services, configuration, NasaOptionsName);
+
+        services.AddHttpClient<NasaProvider>((serviceProvider, client) =>
+            ApplyCommonSettings(client, GetOptions(serviceProvider, NasaOptionsName)));
 
         services.AddScoped<IAggregationProvider>(serviceProvider =>
             serviceProvider.GetRequiredService<NasaProvider>());
     }
 
-    private static void AddNewsApiProvider(
-        IServiceCollection services,
-        IConfiguration configuration)
+    private static void AddNewsApiProvider(IServiceCollection services, IConfiguration configuration)
     {
-        var apiKey = configuration["ExternalApis:NewsApi:ApiKey"];
+        // Read straight from configuration: options are resolved lazily, so
+        // they are not available while the registrations are still being built.
+        var apiKey = configuration[
+            $"{ProviderHttpOptions.SectionName}:{NewsApiOptionsName}:ApiKey"];
 
         // A missing key disables the NewsAPI provider instead of failing
         // startup; requests targeting it are rejected with a validation error.
@@ -93,12 +138,18 @@ public static class AggregationServiceCollectionExtensions
             return;
         }
 
-        services.AddHttpClient<NewsApiProvider>(client =>
+        AddProviderOptions(services, configuration, NewsApiOptionsName)
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.ApiKey),
+                "ExternalApis:NewsApi:ApiKey must not be empty.");
+
+        services.AddHttpClient<NewsApiProvider>((serviceProvider, client) =>
         {
-            client.BaseAddress = new Uri("https://newsapi.org/v2/");
-            client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("ApiAggregator/1.0");
-            client.Timeout = TimeSpan.FromSeconds(15);
+            var options = GetOptions(serviceProvider, NewsApiOptionsName);
+
+            ApplyCommonSettings(client, options);
+
+            client.DefaultRequestHeaders.Add("X-Api-Key", options.ApiKey);
         });
 
         services.AddScoped<IAggregationProvider>(serviceProvider =>
