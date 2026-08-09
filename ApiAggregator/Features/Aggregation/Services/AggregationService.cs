@@ -17,6 +17,16 @@ namespace ApiAggregator.Features.Aggregation.Services
     {
         public async Task<AggregationResponseDto> AggregateAsync(AggregationQueryDto query, CancellationToken cancellationToken)
         {
+            // Every log event written inside this scope carries SearchQuery,
+            // including the per-provider warnings further down. BeginScope is
+            // the provider-agnostic API; Serilog picks it up through
+            // Enrich.FromLogContext, so this class stays free of any
+            // Serilog reference.
+            using var scope = logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SearchQuery"] = query.Query.Trim()
+            });
+
             var selectedProviders = SelectProviders(query);
 
             var providerRequest = new ProviderSearchRequest
@@ -207,7 +217,20 @@ namespace ApiAggregator.Features.Aggregation.Services
                     request,
                     cancellationToken);
 
-                RecordStatistics(provider, startTimestamp, succeeded: true);
+                var elapsed = RecordStatistics(provider, startTimestamp, succeeded: true);
+
+                // Named properties, not string interpolation: Provider,
+                // ItemCount and ElapsedMilliseconds land in their own columns
+                // and stay queryable.
+                //
+                // Information rather than Debug on purpose: this is written
+                // only on a real external call, never on a cache hit, so the
+                // volume is bounded and it is worth persisting.
+                logger.LogInformation(
+                    "Provider {Provider} returned {ItemCount} items in {ElapsedMilliseconds:0.0} ms.",
+                    provider.Source,
+                    items.Count,
+                    elapsed.TotalMilliseconds);
 
                 providerCache.Set(cacheKey, items);
 
@@ -286,15 +309,19 @@ namespace ApiAggregator.Features.Aggregation.Services
             }
         }
 
-        private void RecordStatistics(
+        private TimeSpan RecordStatistics(
             IAggregationProvider provider,
             long startTimestamp,
             bool succeeded)
         {
+            var elapsed = timeProvider.GetElapsedTime(startTimestamp);
+
             statisticsCollector.Record(
                 provider.Source,
-                timeProvider.GetElapsedTime(startTimestamp),
+                elapsed,
                 succeeded);
+
+            return elapsed;
         }
 
         private static ProviderExecutionDto MapProviderExecution(ProviderResult result)
