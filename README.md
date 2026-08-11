@@ -10,6 +10,33 @@ sorted results in one response.
 | `Nasa` | NASA Image and Video Library | `Media` |
 | `NewsApi` | NewsAPI `/v2/everything` | `Article` |
 
+## Changes after submission
+
+This branch collects the work done after the assignment was submitted.
+The `master` branch remains exactly as delivered; each change below was
+developed on its own branch and merged here through a pull request, so
+the individual diffs stay easy to review.
+
+- **Validation fix.** Enum query parameters accepted out-of-range numeric
+  values (for example `SortBy=99`), which reached the sorting logic and
+  surfaced as a 500. Such values are now rejected with a 400 and covered
+  by regression tests.
+- **Configuration over hardcoding.** The provider HTTP settings (base
+  address, timeout, headers) moved from constants in the DI setup to the
+  `ExternalApis` configuration section, bound as named options and
+  validated at startup, so a bad value fails the deployment instead of
+  the first request.
+- **Structured logging.** Serilog, configured in code: console output
+  plus a SQL Server sink (LocalDB) that stores named log properties in
+  queryable columns, one summary line per HTTP request, and log entries
+  carrying the same trace id that error responses expose in their
+  ProblemDetails body.
+
+The SQL sink reads `ConnectionStrings:LogDatabase`. With the default
+LocalDB connection string the database and the log table are created
+automatically on first run. If the value is missing, the application
+still starts and logs to the console only.
+
 ## Getting started
 
 ### Prerequisites
