@@ -46,6 +46,31 @@ namespace ApiAggregator.Features.Aggregation.DTOs
                     "FromDate cannot be later than ToDate",
                     new[] { nameof(FromDate), nameof(ToDate) });
             }
+
+            if (!Enum.IsDefined(SortBy))
+            {
+                yield return new ValidationResult(
+                    "Unknown sort field.", [nameof(SortBy)]);
+            }
+
+            if (!Enum.IsDefined(SortDirection))
+            {
+                yield return new ValidationResult(
+                    "Unknown sort direction.", [nameof(SortDirection)]);
+            }
+
+            if (Category is { } category && !Enum.IsDefined(category))
+            {
+                yield return new ValidationResult(
+                    "Unknown content category.", [nameof(Category)]);
+            }
+
+            if (Sources is { Length: > 0 } sources
+                && Array.Exists(sources, source => !Enum.IsDefined(source)))
+            {
+                yield return new ValidationResult(
+                    "Unknown source.", [nameof(Sources)]);
+            }
         }
     }
 }
