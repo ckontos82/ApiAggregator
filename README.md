@@ -166,3 +166,11 @@ ApiAggregator.Tests/ xUnit unit tests
 Adding a provider means implementing `IAggregationProvider`, mapping its
 results to `AggregatedItem`, and registering it (typed `HttpClient` +
 `IAggregationProvider` mapping) in `AggregationServiceCollectionExtensions`.
+
+## Post-submission work
+
+This branch (`master`) is the state submitted on 2026-08-05, with only
+this notice added afterwards. Later improvements (structured logging,
+options-based configuration, a validation fix) live on the
+`post-submission-changes` branch, merged there through pull requests
+so each change is reviewable on its own.
