@@ -1,41 +1,40 @@
 ﻿using ApiAggregator.Features.Aggregation.Models;
 using Microsoft.Extensions.Caching.Memory;
 
-namespace ApiAggregator.Features.Aggregation.Caching
+namespace ApiAggregator.Features.Aggregation.Caching;
+
+
+internal sealed class ProviderMemoryCache(IMemoryCache cache, TimeProvider timeProvider) : IProviderCache
 {
+    private static readonly TimeSpan FreshLifetime = TimeSpan.FromSeconds(30);
 
-    internal sealed class ProviderMemoryCache(IMemoryCache cache, TimeProvider timeProvider) : IProviderCache
+    private static readonly TimeSpan StaleLifetime = TimeSpan.FromMinutes(30);
+
+    public bool TryGetFresh(string key, out ProviderCacheEntry? entry)
     {
-        private static readonly TimeSpan FreshLifetime = TimeSpan.FromSeconds(30);
+        if (!TryGetStale(key, out entry))
+            return false;
 
-        private static readonly TimeSpan StaleLifetime = TimeSpan.FromMinutes(30);
+        return timeProvider.GetUtcNow() - entry!.CachedAt <= FreshLifetime;
+    }
 
-        public bool TryGetFresh(string key, out ProviderCacheEntry? entry)
+    public bool TryGetStale(string key, out ProviderCacheEntry? entry)
+    {
+        return cache.TryGetValue(key, out entry)
+            && entry is not null;
+    }
+
+    public void Set(string key, IReadOnlyList<AggregatedItem> items)
+    {
+        var entry = new ProviderCacheEntry
         {
-            if (!TryGetStale(key, out entry))
-                return false;
+            Items = items,
+            CachedAt = timeProvider.GetUtcNow()
+        };
 
-            return timeProvider.GetUtcNow() - entry!.CachedAt <= FreshLifetime;
-        }
-
-        public bool TryGetStale(string key, out ProviderCacheEntry? entry)
-        {
-            return cache.TryGetValue(key, out entry)
-                && entry is not null;
-        }
-
-        public void Set(string key, IReadOnlyList<AggregatedItem> items)
-        {
-            var entry = new ProviderCacheEntry
-            {
-                Items = items,
-                CachedAt = timeProvider.GetUtcNow()
-            };
-
-            cache.Set(
-                key,
-                entry,
-                StaleLifetime);
-        }
+        cache.Set(
+            key,
+            entry,
+            StaleLifetime);
     }
 }
