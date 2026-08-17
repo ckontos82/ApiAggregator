@@ -171,6 +171,6 @@ results to `AggregatedItem`, and registering it (typed `HttpClient` +
 
 This branch (`master`) is the state submitted on 2026-08-05, with only
 this notice added afterwards. Later improvements (structured logging,
-options-based configuration, a validation fix) live on the
+options-based configuration, enum validation hardening) live on the
 `post-submission-changes` branch, merged there through pull requests
 so each change is reviewable on its own.
