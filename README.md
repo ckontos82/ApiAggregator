@@ -17,10 +17,12 @@ The `master` branch remains exactly as delivered; each change below was
 developed on its own branch and merged here through a pull request, so
 the individual diffs stay easy to review.
 
-- **Validation fix.** Enum query parameters accepted out-of-range numeric
-  values (for example `SortBy=99`), which reached the sorting logic and
-  surfaced as a 500. Such values are now rejected with a 400 and covered
-  by regression tests.
+- **Enum validation hardening.** Undefined numeric values for enum query
+  parameters (for example `SortBy=99`) are rejected by the framework's
+  model binding, but the sorting logic still relied on a throwing switch
+  arm if such a value ever arrived through another path (direct service
+  calls, future non-HTTP callers). The query DTO now validates that every
+  enum value is defined, and regression tests pin the 400 contract.
 - **Configuration over hardcoding.** The provider HTTP settings (base
   address, timeout, headers) moved from constants in the DI setup to the
   `ExternalApis` configuration section, bound as named options and
