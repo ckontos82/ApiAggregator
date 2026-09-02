@@ -10,41 +10,14 @@ sorted results in one response.
 | `Nasa` | NASA Image and Video Library | `Media` |
 | `NewsApi` | NewsAPI `/v2/everything` | `Article` |
 
-## Changes after submission
-
-This branch collects the work done after the assignment was submitted.
-The `master` branch remains exactly as delivered; each change below was
-developed on its own branch and merged here through a pull request, so
-the individual diffs stay easy to review.
-
-- **Enum validation hardening.** Undefined numeric values for enum query
-  parameters (for example `SortBy=99`) are rejected by the framework's
-  model binding, but the sorting logic still relied on a throwing switch
-  arm if such a value ever arrived through another path (direct service
-  calls, future non-HTTP callers). The query DTO now validates that every
-  enum value is defined, and regression tests pin the 400 contract.
-- **Configuration over hardcoding.** The provider HTTP settings (base
-  address, timeout, headers) moved from constants in the DI setup to the
-  `ExternalApis` configuration section, bound as named options and
-  validated at startup, so a bad value fails the deployment instead of
-  the first request.
-- **Structured logging.** Serilog, configured in code: console output
-  plus a SQL Server sink (LocalDB) that stores named log properties in
-  queryable columns, one summary line per HTTP request, and log entries
-  carrying the same trace id that error responses expose in their
-  ProblemDetails body.
-
-The SQL sink reads `ConnectionStrings:LogDatabase`. With the default
-LocalDB connection string the database and the log table are created
-automatically on first run. If the value is missing, the application
-still starts and logs to the console only.
-
 ## Getting started
 
 ### Prerequisites
 
 - .NET 10 SDK
 - A [NewsAPI](https://newsapi.org) API key (optional, see below)
+- SQL Server LocalDB for the log database (optional, see
+  [Logging](#logging))
 
 ### Configure the NewsAPI key
 
@@ -93,6 +66,9 @@ dotnet test
 | `SortBy` | `Timestamp` \| `Title` \| `Source` \| `Category` | `Timestamp` | Sort field for the merged result |
 | `SortDirection` | `Ascending` \| `Descending` | `Descending` | Sort direction |
 | `ResultsPerSource` | int 1-25 | 10 | Maximum items requested from each provider |
+
+Enum parameters accept their names (case-insensitive). Undefined values,
+whether by name or by number (`SortBy=99`), are rejected with `400`.
 
 Example:
 
@@ -159,13 +135,15 @@ that only appear at request time:
   provider, returns `400` with a `ValidationProblemDetails` body
   explaining why.
 - **Runtime failures degrade gracefully.** A provider that times out
-  (15 s per provider) or errors mid-request does not fail the response.
-  It is reported in `providers` as `Unavailable` (no data) or `Degraded`
-  (stale cached data was served instead), while healthy providers return
-  normally.
+  (15 s per provider by default) or errors mid-request does not fail the
+  response. It is reported in `providers` as `Unavailable` (no data) or
+  `Degraded` (stale cached data was served instead), while healthy
+  providers return normally.
 - **Unexpected errors return RFC 7807 responses.** Unhandled exceptions
   and empty error status codes (404, 405, etc.) are returned as
-  `application/problem+json` bodies rather than empty responses.
+  `application/problem+json` bodies rather than empty responses. The
+  `traceId` in the body matches the `TraceId` column of the corresponding
+  log entries, so a reported error can be looked up directly.
 
 ### Caching
 
@@ -176,11 +154,46 @@ Each provider response is cached in memory per unique request
 - **Stale** for 30 minutes: served only as a fallback when the provider
   fails, marked `isFromCache: true, isStale: true` with status `Degraded`.
 
+## Configuration
+
+### External APIs
+
+Each provider's HTTP settings live under `ExternalApis:{Source}` in
+`appsettings.json` and are bound as named options. They are validated at
+startup, so an invalid value (missing base address, timeout out of range)
+fails the deployment instead of the first request.
+
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `BaseAddress` | yes | - | Root URL of the external API |
+| `TimeoutSeconds` | no | 15 | Per-request timeout, 1-120 |
+| `UserAgent` | no | `ApiAggregator/1.0` | `User-Agent` header (GitHub rejects requests without one) |
+| `ApiVersion` | no | - | GitHub only: `X-GitHub-Api-Version` header |
+| `ApiKey` | NewsAPI only | - | NewsAPI key; supply via user secrets or environment, never in `appsettings.json` |
+
+### Logging
+
+Logging uses Serilog, configured in code. Every run writes to the console.
+If `ConnectionStrings:LogDatabase` is set, entries are also written to a
+SQL Server table (`dbo.Logs`) where the most useful properties are stored
+in their own queryable columns: `TraceId`, `RequestId`, `Provider`,
+`SearchQuery`, `StatusCode`, `Elapsed`, `RequestPath`, and more. The full
+event is kept as JSON in the `LogEvent` column.
+
+The default connection string targets LocalDB; the database and table are
+created automatically on first run. If the connection string is missing,
+the application still starts and logs to the console only. Requests to the
+Scalar UI and the OpenAPI document are excluded from the log.
+
+Each HTTP request produces one summary line, logged at `Information` for
+successes, `Warning` for 4xx, and `Error` for 5xx or exceptions.
+
 ## Project layout
 
 ```
 ApiAggregator/
   Features/Aggregation/
+    Configuration/   ProviderHttpOptions (ExternalApis section)
     Controllers/     Aggregation and statistics endpoints
     Services/        AggregationService (fan-out, merge, filter, sort)
     Providers/       One folder per external API (GitHub, Nasa, NewsApi)
@@ -189,9 +202,12 @@ ApiAggregator/
     DTOs/            Request/response contracts
     Models/          Internal domain models
     Enums/           Sources, categories, statuses, sort options
+  Infrastructure/
+    Logging/         Serilog registration and trace-context enricher
 ApiAggregator.Tests/ xUnit unit tests
 ```
 
 Adding a provider means implementing `IAggregationProvider`, mapping its
-results to `AggregatedItem`, and registering it (typed `HttpClient` +
+results to `AggregatedItem`, adding an `ExternalApis:{Source}` section to
+configuration, and registering it (named options + typed `HttpClient` +
 `IAggregationProvider` mapping) in `AggregationServiceCollectionExtensions`.
