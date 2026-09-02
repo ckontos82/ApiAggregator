@@ -1,24 +1,23 @@
 using ApiAggregator.Features.Aggregation.Caching;
 using ApiAggregator.Features.Aggregation.Models;
 
-namespace ApiAggregator.Tests.TestDoubles
+namespace ApiAggregator.Tests.TestDoubles;
+
+internal sealed class NoOpProviderCache : IProviderCache
 {
-    internal sealed class NoOpProviderCache : IProviderCache
+    public bool TryGetFresh(string key, out ProviderCacheEntry? entry)
     {
-        public bool TryGetFresh(string key, out ProviderCacheEntry? entry)
-        {
-            entry = null;
-            return false;
-        }
+        entry = null;
+        return false;
+    }
 
-        public bool TryGetStale(string key, out ProviderCacheEntry? entry)
-        {
-            entry = null;
-            return false;
-        }
+    public bool TryGetStale(string key, out ProviderCacheEntry? entry)
+    {
+        entry = null;
+        return false;
+    }
 
-        public void Set(string key, IReadOnlyList<AggregatedItem> items)
-        {
-        }
+    public void Set(string key, IReadOnlyList<AggregatedItem> items)
+    {
     }
 }

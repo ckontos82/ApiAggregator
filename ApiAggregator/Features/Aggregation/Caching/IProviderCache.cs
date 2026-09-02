@@ -1,13 +1,12 @@
 ﻿using ApiAggregator.Features.Aggregation.Models;
 
-namespace ApiAggregator.Features.Aggregation.Caching
+namespace ApiAggregator.Features.Aggregation.Caching;
+
+internal interface IProviderCache
 {
-    internal interface IProviderCache
-    {
-        bool TryGetFresh(string key, out ProviderCacheEntry? entry);
+    bool TryGetFresh(string key, out ProviderCacheEntry? entry);
 
-        bool TryGetStale(string key, out ProviderCacheEntry? entry);
+    bool TryGetStale(string key, out ProviderCacheEntry? entry);
 
-        void Set(string key, IReadOnlyList<AggregatedItem> items);
-    }
+    void Set(string key, IReadOnlyList<AggregatedItem> items);
 }
