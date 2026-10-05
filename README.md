@@ -158,8 +158,10 @@ that only appear at request time:
 - **Unexpected errors return RFC 7807 responses.** Unhandled exceptions
   and empty error status codes (404, 405, etc.) are returned as
   `application/problem+json` bodies rather than empty responses. The
-  `traceId` in the body matches the `TraceId` column of the corresponding
-  log entries, so a reported error can be looked up directly.
+  `traceId` in the body is a W3C trace context value
+  (`00-<trace-id>-<span-id>-01`); its `<trace-id>` segment matches the
+  `TraceId` column of the corresponding log entries, so a reported error
+  can be looked up directly.
 
 ### Caching
 
@@ -198,16 +200,20 @@ event is kept as JSON in the `LogEvent` column.
 
 The default connection string targets LocalDB; the database and table are
 created automatically on first run. If the connection string is missing,
-the application still starts and logs to the console only. Requests to the
-Scalar UI, the OpenAPI document, and the health check endpoints are excluded
-from the log.
+the application still starts and logs to the console only. Routine requests
+to the Scalar UI, the OpenAPI document, and the health check endpoints are
+excluded from the log; warnings and errors from those endpoints (such as a
+failing health check) are kept.
 
 Each HTTP request produces one summary line, logged at `Information` for
 successes, `Warning` for 4xx, and `Error` for 5xx or exceptions.
 
 Events are also forwarded to OpenTelemetry (see
 [Observability](#observability)); Serilog filters first, so the dashboard
-shows the same events as the console and SQL sinks.
+shows the same events as the console and SQL sinks. Forwarded messages are
+rendered with Serilog's default formatting, so string values appear quoted
+in the dashboard (`Provider "GitHub" returned ...`) while the console shows
+them unquoted.
 
 ## Observability
 
@@ -225,8 +231,9 @@ solution. The dashboard shows:
 - **Health:** the `api` resource is reported healthy through `/health`. The
   `/health` and `/alive` endpoints are mapped only in Development.
 
-The `traceId` in `ProblemDetails` error responses is the trace id shown in the
-dashboard, so an error response leads directly to its trace.
+The `<trace-id>` segment of the `traceId` in `ProblemDetails` error responses
+(`00-<trace-id>-<span-id>-01`) is the trace id shown in the dashboard, so an
+error response leads directly to its trace.
 
 ### Custom telemetry
 

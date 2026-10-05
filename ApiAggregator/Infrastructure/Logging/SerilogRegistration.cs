@@ -34,9 +34,11 @@ public static class SerilogRegistration
     }
 
     /// <summary>
-    /// Replaces the default logging providers with Serilog. The delegate
-    /// receives the built <see cref="IServiceProvider"/>, so sinks can
-    /// resolve services if they ever need to.
+    /// Makes Serilog the logging pipeline and forwards every event that
+    /// passes its filters to the logging providers registered after this
+    /// call (the OpenTelemetry provider from <c>AddServiceDefaults</c>).
+    /// The delegate receives the built <see cref="IServiceProvider"/>, so
+    /// sinks can resolve services if they ever need to.
     /// </summary>
     public static WebApplicationBuilder AddSerilogLogging(
         this WebApplicationBuilder builder)
@@ -101,7 +103,7 @@ public static class SerilogRegistration
             // the AppHost polls the health endpoints continuously. Without
             // this, most of the log is Scalar fetching its own assets and
             // health check pings.
-            .Filter.ByExcluding(IsNonApiRequest)
+            .Filter.ByExcluding(IsRoutineNonApiEvent)
 
             .WriteTo.Console(outputTemplate: ConsoleTemplate);
 
@@ -121,10 +123,35 @@ public static class SerilogRegistration
             return false;
         }
 
-        return requestPath.StartsWith("/scalar", StringComparison.OrdinalIgnoreCase)
-            || requestPath.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase)
-            || requestPath.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
-            || requestPath.StartsWith("/alive", StringComparison.OrdinalIgnoreCase);
+        return StartsWithSegment(requestPath, "/scalar")
+            || StartsWithSegment(requestPath, "/openapi")
+            || StartsWithSegment(requestPath, "/health")
+            || StartsWithSegment(requestPath, "/alive");
+    }
+
+    /// <summary>
+    /// True for the routine traffic <see cref="IsNonApiRequest"/> describes,
+    /// below <see cref="LogEventLevel.Warning"/>. Warnings and errors from
+    /// those endpoints are kept: a failing health check (a 503 summary
+    /// line, or the health check service's own error) is exactly what the
+    /// log should show.
+    /// </summary>
+    internal static bool IsRoutineNonApiEvent(LogEvent logEvent)
+    {
+        return logEvent.Level < LogEventLevel.Warning
+            && IsNonApiRequest(logEvent);
+    }
+
+    /// <summary>
+    /// Whole-segment prefix match, so <c>/health</c> matches
+    /// <c>/health</c> and <c>/health/ready</c> but not <c>/healthz</c>.
+    /// Mirrors <c>PathString.StartsWithSegments</c>, which the tracing
+    /// filter in ServiceDefaults uses for the same endpoints.
+    /// </summary>
+    private static bool StartsWithSegment(string path, string segment)
+    {
+        return path.StartsWith(segment, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == segment.Length || path[segment.Length] == '/');
     }
 
     private static void AddSqlServerSink(

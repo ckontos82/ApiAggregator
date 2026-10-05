@@ -23,8 +23,9 @@ public sealed class AggregationServiceTests
     private static readonly DateTimeOffset BaseTime =
         new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
 
-    // No listener is attached to this instance, so StartProviderActivity
-    // returns null and the existing tests exercise the no-listener path.
+    // Tests using this instance run outside any TelemetryCapture trace, so
+    // no listener samples their activities: StartProviderActivity returns
+    // null and these tests exercise the no-activity path.
     private static readonly AggregationTelemetry DefaultTelemetry = new(
         new ServiceCollection()
             .AddMetrics()

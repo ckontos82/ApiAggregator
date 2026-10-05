@@ -11,7 +11,8 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // Replaces the default logging providers with Serilog.
+    // Serilog becomes the logging pipeline; filtered events are forwarded
+    // to the OpenTelemetry provider that AddServiceDefaults registers.
     builder.AddSerilogLogging();
 
     // OpenTelemetry and health checks. Must stay after AddSerilogLogging: Serilog
