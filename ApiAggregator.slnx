@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="ApiAggregator.AppHost/ApiAggregator.AppHost.csproj" />
+  <Project Path="ApiAggregator.ServiceDefaults/ApiAggregator.ServiceDefaults.csproj" />
   <Project Path="ApiAggregator.Tests/ApiAggregator.Tests.csproj" />
   <Project Path="ApiAggregator/ApiAggregator.csproj" />
 </Solution>
