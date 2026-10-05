@@ -217,7 +217,7 @@ them unquoted.
 
 ## Observability
 
-`ApiAggregator.AppHost` runs the API under .NET Aspire and hosts the Aspire
+`ApiAggregator.AppHost` runs the API under Aspire and hosts the Aspire
 Dashboard, a developer tool for local use rather than a production monitoring
 solution. The dashboard shows:
 
