@@ -4,6 +4,8 @@ using ApiAggregator.Features.Aggregation.Enums;
 using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Statistics;
+using ApiAggregator.Features.Aggregation.Telemetry;
+using System.Diagnostics;
 
 namespace ApiAggregator.Features.Aggregation.Services;
 
@@ -12,6 +14,7 @@ internal sealed class AggregationService(
     IEnumerable<DisabledProvider> disabledProviders,
     IProviderCache providerCache,
     IProviderStatisticsCollector statisticsCollector,
+    AggregationTelemetry telemetry,
     TimeProvider timeProvider,
     ILogger<AggregationService> logger) : IAggregationService
 {
@@ -195,9 +198,33 @@ internal sealed class AggregationService(
         ProviderSearchRequest request,
         CancellationToken cancellationToken)
     {
+        using var activity = telemetry.StartProviderActivity(provider.Source);
+
+        // Caller cancellation propagates out of the core method, so no
+        // result is recorded and the span does not get an Error status.
+        var result = await ExecuteProviderCoreAsync(
+            provider,
+            request,
+            activity,
+            cancellationToken);
+
+        telemetry.RecordProviderResult(activity, result);
+
+        return result;
+    }
+
+    private async Task<ProviderResult> ExecuteProviderCoreAsync(
+        IAggregationProvider provider,
+        ProviderSearchRequest request,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
         var cacheKey = BuildCacheKey(provider, request);
 
-        if (providerCache.TryGetFresh(cacheKey, out var cachedEntry))
+        var cacheHit = providerCache.TryGetFresh(cacheKey, out var cachedEntry);
+        telemetry.RecordCacheLookup(activity, provider.Source, cacheHit);
+
+        if (cacheHit)
         {
             return new ProviderResult
             {
@@ -217,7 +244,7 @@ internal sealed class AggregationService(
                 request,
                 cancellationToken);
 
-            var elapsed = RecordStatistics(provider, startTimestamp, succeeded: true);
+            var elapsed = RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Success);
 
             // Named properties, not string interpolation: Provider,
             // ItemCount and ElapsedMilliseconds land in their own columns
@@ -249,7 +276,8 @@ internal sealed class AggregationService(
         }
         catch (OperationCanceledException exception)
         {
-            RecordStatistics(provider, startTimestamp, succeeded: false);
+            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Timeout);
+            AggregationTelemetry.RecordException(activity, exception);
 
             // The caller token was not cancelled, so this is treated
             // as the provider HttpClient timeout.
@@ -262,7 +290,8 @@ internal sealed class AggregationService(
         }
         catch (HttpRequestException exception)
         {
-            RecordStatistics(provider, startTimestamp, succeeded: false);
+            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.HttpError);
+            AggregationTelemetry.RecordException(activity, exception);
 
             logger.LogWarning(
                 exception,
@@ -273,7 +302,8 @@ internal sealed class AggregationService(
         }
         catch (Exception exception)
         {
-            RecordStatistics(provider, startTimestamp, succeeded: false);
+            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Error);
+            AggregationTelemetry.RecordException(activity, exception);
 
             logger.LogError(
                 exception,
@@ -312,14 +342,16 @@ internal sealed class AggregationService(
     private TimeSpan RecordStatistics(
         IAggregationProvider provider,
         long startTimestamp,
-        bool succeeded)
+        ProviderCallOutcome outcome)
     {
         var elapsed = timeProvider.GetElapsedTime(startTimestamp);
 
         statisticsCollector.Record(
             provider.Source,
             elapsed,
-            succeeded);
+            outcome == ProviderCallOutcome.Success);
+
+        telemetry.RecordProviderDuration(provider.Source, elapsed, outcome);
 
         return elapsed;
     }
