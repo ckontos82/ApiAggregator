@@ -52,11 +52,20 @@ public static class SerilogRegistration
             SelfLog.Enable(Console.Error);
         }
 
-        builder.Host.UseSerilog((context, _, loggerConfiguration) =>
-            Configure(
-                loggerConfiguration,
-                context.Configuration,
-                context.HostingEnvironment));
+        // CreateBuilder registers the Console, Debug, EventSource and
+        // EventLog providers, which would otherwise also receive every
+        // event Serilog forwards (duplicate console output). The only
+        // provider left after this is the OpenTelemetry one that
+        // AddServiceDefaults adds later, which sends logs to the dashboard.
+        builder.Logging.ClearProviders();
+
+        builder.Host.UseSerilog(
+            (context, _, loggerConfiguration) =>
+                Configure(
+                    loggerConfiguration,
+                    context.Configuration,
+                    context.HostingEnvironment),
+            writeToProviders: true);
 
         return builder;
     }
@@ -88,9 +97,11 @@ public static class SerilogRegistration
             .Enrich.WithProperty("Environment", environment.EnvironmentName)
             .Enrich.WithProperty("MachineName", Environment.MachineName)
 
-            // The docs UI issues a handful of requests per page load.
-            // Without this, half the log is Scalar fetching its own assets.
-            .Filter.ByExcluding(IsDocumentationRequest)
+            // The docs UI issues a handful of requests per page load, and
+            // the AppHost polls the health endpoints continuously. Without
+            // this, most of the log is Scalar fetching its own assets and
+            // health check pings.
+            .Filter.ByExcluding(IsNonApiRequest)
 
             .WriteTo.Console(outputTemplate: ConsoleTemplate);
 
@@ -98,10 +109,11 @@ public static class SerilogRegistration
     }
 
     /// <summary>
-    /// True for requests to the OpenAPI document or the Scalar UI and its
-    /// static assets. These say nothing about the API's behaviour.
+    /// True for requests to the OpenAPI document, the Scalar UI and its
+    /// static assets, or the health check endpoints the AppHost polls.
+    /// These say nothing about the API's behaviour.
     /// </summary>
-    private static bool IsDocumentationRequest(LogEvent logEvent)
+    internal static bool IsNonApiRequest(LogEvent logEvent)
     {
         if (!logEvent.Properties.TryGetValue("RequestPath", out var value)
             || value is not ScalarValue { Value: string requestPath })
@@ -110,7 +122,9 @@ public static class SerilogRegistration
         }
 
         return requestPath.StartsWith("/scalar", StringComparison.OrdinalIgnoreCase)
-            || requestPath.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase);
+            || requestPath.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase)
+            || requestPath.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
+            || requestPath.StartsWith("/alive", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AddSqlServerSink(
