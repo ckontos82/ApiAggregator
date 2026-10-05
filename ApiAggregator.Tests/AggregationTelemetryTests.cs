@@ -34,7 +34,6 @@ public sealed class AggregationTelemetryTests
 
         Assert.Null(activity);
         telemetry.RecordCacheLookup(null, AggregationSource.Nasa, hit: true);
-        AggregationTelemetry.RecordException(null, new InvalidOperationException());
         telemetry.RecordProviderResult(null, CreateResult(ProviderStatus.Succeeded));
     }
 
@@ -161,18 +160,6 @@ public sealed class AggregationTelemetryTests
             activity, CreateResult(ProviderStatus.Degraded, errorMessage: null));
 
         Assert.Equal(ActivityStatusCode.Error, activity!.Status);
-    }
-
-    [Fact]
-    public void RecordException_AddsExceptionEvent()
-    {
-        using var capture = new TelemetryCapture();
-        using var activity = capture.Telemetry.StartProviderActivity(AggregationSource.GitHub);
-
-        AggregationTelemetry.RecordException(activity, new InvalidOperationException("boom"));
-
-        var activityEvent = Assert.Single(activity!.Events);
-        Assert.Equal("exception", activityEvent.Name);
     }
 
     private static ProviderResult CreateResult(

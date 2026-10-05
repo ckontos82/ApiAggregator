@@ -7,8 +7,8 @@ using System.Diagnostics.Metrics;
 namespace ApiAggregator.Tests.TestDoubles;
 
 /// <summary>
-/// Captures the spans and metrics emitted by an <see cref="AggregationTelemetry"/>
-/// instance. Create it in the test method body (<c>using var capture = new TelemetryCapture();</c>)
+/// Captures the spans emitted within this capture's trace, plus the metrics of
+/// its own <see cref="AggregationTelemetry"/> instance. Create it in the test method body (<c>using var capture = new TelemetryCapture();</c>)
 /// so <see cref="Activity.Current"/> flows into the code under test.
 /// </summary>
 /// <remarks>
@@ -35,11 +35,11 @@ internal sealed class TelemetryCapture : IDisposable
 
         Telemetry = new AggregationTelemetry(meterFactory);
         Durations = new MetricCollector<double>(
-            meterFactory, AggregationTelemetry.Name, "aggregator.provider.duration");
+            meterFactory, AggregationTelemetry.Name, AggregationTelemetry.DurationInstrument);
         CacheLookups = new MetricCollector<long>(
-            meterFactory, AggregationTelemetry.Name, "aggregator.cache.lookups");
+            meterFactory, AggregationTelemetry.Name, AggregationTelemetry.CacheLookupsInstrument);
         Results = new MetricCollector<long>(
-            meterFactory, AggregationTelemetry.Name, "aggregator.provider.results");
+            meterFactory, AggregationTelemetry.Name, AggregationTelemetry.ResultsInstrument);
 
         Parent = new Activity("test").Start();
 

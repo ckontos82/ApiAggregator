@@ -37,8 +37,6 @@ public static class SerilogRegistration
     /// Makes Serilog the logging pipeline and forwards every event that
     /// passes its filters to the logging providers registered after this
     /// call (the OpenTelemetry provider from <c>AddServiceDefaults</c>).
-    /// The delegate receives the built <see cref="IServiceProvider"/>, so
-    /// sinks can resolve services if they ever need to.
     /// </summary>
     public static WebApplicationBuilder AddSerilogLogging(
         this WebApplicationBuilder builder)
@@ -72,7 +70,7 @@ public static class SerilogRegistration
         return builder;
     }
 
-    private static void Configure(
+    internal static void Configure(
         LoggerConfiguration loggerConfiguration,
         IConfiguration configuration,
         IHostEnvironment environment)
@@ -100,9 +98,8 @@ public static class SerilogRegistration
             .Enrich.WithProperty("MachineName", Environment.MachineName)
 
             // The docs UI issues a handful of requests per page load, and
-            // the AppHost polls the health endpoints continuously. Without
-            // this, most of the log is Scalar fetching its own assets and
-            // health check pings.
+            // the AppHost polls /health continuously. Without this, most of
+            // the log is Scalar fetching its own assets and health check pings.
             .Filter.ByExcluding(IsRoutineNonApiEvent)
 
             .WriteTo.Console(outputTemplate: ConsoleTemplate);
@@ -112,7 +109,7 @@ public static class SerilogRegistration
 
     /// <summary>
     /// True for requests to the OpenAPI document, the Scalar UI and its
-    /// static assets, or the health check endpoints the AppHost polls.
+    /// static assets, or the health check endpoints.
     /// These say nothing about the API's behaviour.
     /// </summary>
     internal static bool IsNonApiRequest(LogEvent logEvent)
@@ -219,7 +216,7 @@ public static class SerilogRegistration
             new SqlColumn("MachineName", SqlDbType.NVarChar, dataLength: 64),
             new SqlColumn("RequestId", SqlDbType.NVarChar, dataLength: 64),
 
-            // The identifier the caller actually sees in an error response.
+            // The trace-id segment of the traceId returned in an error response.
             new SqlColumn("TraceId", SqlDbType.NVarChar, dataLength: 32),
             new SqlColumn("SpanId", SqlDbType.NVarChar, dataLength: 16),
 
@@ -227,7 +224,7 @@ public static class SerilogRegistration
             new SqlColumn("SearchQuery", SqlDbType.NVarChar, dataLength: 128),
 
             // "Elapsed" comes from the request-logging template,
-            // "ElapsedMilliseconds" from the per-provider Debug entry.
+            // "ElapsedMilliseconds" from the per-provider Information entry.
             new SqlColumn("Elapsed", SqlDbType.Float),
             new SqlColumn("ElapsedMilliseconds", SqlDbType.Float),
             new SqlColumn("StatusCode", SqlDbType.Int),

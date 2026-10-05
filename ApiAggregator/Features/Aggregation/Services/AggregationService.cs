@@ -238,35 +238,16 @@ internal sealed class AggregationService(
 
         var startTimestamp = timeProvider.GetTimestamp();
 
+        // Only the provider call is inside the try. The success bookkeeping
+        // below must not be: a throw there would be caught as a provider
+        // failure, counting one call as both a success and an error.
+        IReadOnlyList<AggregatedItem> items;
+
         try
         {
-            var items = await provider.SearchAsync(
+            items = await provider.SearchAsync(
                 request,
                 cancellationToken);
-
-            var elapsed = RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Success);
-
-            // Named properties, not string interpolation: Provider,
-            // ItemCount and ElapsedMilliseconds land in their own columns
-            // and stay queryable.
-            //
-            // Information rather than Debug on purpose: this is written
-            // only on a real external call, never on a cache hit, so the
-            // volume is bounded and it is worth persisting.
-            logger.LogInformation(
-                "Provider {Provider} returned {ItemCount} items in {ElapsedMilliseconds:0.0} ms.",
-                provider.Source,
-                items.Count,
-                elapsed.TotalMilliseconds);
-
-            providerCache.Set(cacheKey, items);
-
-            return new ProviderResult
-            {
-                Source = provider.Source,
-                Items = items,
-                Status = ProviderStatus.Succeeded
-            };
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
@@ -277,7 +258,7 @@ internal sealed class AggregationService(
         catch (OperationCanceledException exception)
         {
             RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Timeout);
-            AggregationTelemetry.RecordException(activity, exception);
+            activity?.AddException(exception);
 
             // The caller token was not cancelled, so this is treated
             // as the provider HttpClient timeout.
@@ -291,7 +272,7 @@ internal sealed class AggregationService(
         catch (HttpRequestException exception)
         {
             RecordStatistics(provider, startTimestamp, ProviderCallOutcome.HttpError);
-            AggregationTelemetry.RecordException(activity, exception);
+            activity?.AddException(exception);
 
             logger.LogWarning(
                 exception,
@@ -303,7 +284,7 @@ internal sealed class AggregationService(
         catch (Exception exception)
         {
             RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Error);
-            AggregationTelemetry.RecordException(activity, exception);
+            activity?.AddException(exception);
 
             logger.LogError(
                 exception,
@@ -312,6 +293,30 @@ internal sealed class AggregationService(
 
             return CreateFailureResult(provider, cacheKey, $"{provider.Source} could not return results.");
         }
+
+        var elapsed = RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Success);
+
+        // Named properties, not string interpolation: Provider,
+        // ItemCount and ElapsedMilliseconds land in their own columns
+        // and stay queryable.
+        //
+        // Information rather than Debug on purpose: this is written
+        // only on a real external call, never on a cache hit, so the
+        // volume is bounded and it is worth persisting.
+        logger.LogInformation(
+            "Provider {Provider} returned {ItemCount} items in {ElapsedMilliseconds:0.0} ms.",
+            provider.Source,
+            items.Count,
+            elapsed.TotalMilliseconds);
+
+        providerCache.Set(cacheKey, items);
+
+        return new ProviderResult
+        {
+            Source = provider.Source,
+            Items = items,
+            Status = ProviderStatus.Succeeded
+        };
     }
 
     private IEnumerable<ProviderExecutionDto> SelectDisabledExecutions(AggregationQueryDto query)

@@ -1,4 +1,8 @@
 using ApiAggregator.Infrastructure.Logging;
+using ApiAggregator.Tests.TestDoubles;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting.Internal;
+using Serilog;
 using Serilog.Events;
 using Serilog.Parsing;
 
@@ -54,6 +58,30 @@ public sealed class SerilogRegistrationTests
     [Fact]
     public void IsRoutineNonApiEvent_ReturnsFalse_ForApiPaths()
         => Assert.False(SerilogRegistration.IsRoutineNonApiEvent(CreateEvent("/api/aggregation")));
+
+    [Fact]
+    public void Configure_DropsRoutineHealthEvents_KeepsHealthWarnings()
+    {
+        var sink = new CollectingSink();
+        var loggerConfiguration = new LoggerConfiguration();
+
+        // Empty configuration: no LogDatabase connection string, so no SQL sink.
+        SerilogRegistration.Configure(
+            loggerConfiguration,
+            new ConfigurationBuilder().Build(),
+            new HostingEnvironment { EnvironmentName = "Test" });
+
+        using (var logger = loggerConfiguration.WriteTo.Sink(sink).CreateLogger())
+        {
+            var healthLogger = logger.ForContext("RequestPath", "/health");
+
+            healthLogger.Information("Routine health check");
+            healthLogger.Warning("Failing health check");
+        }
+
+        var logEvent = Assert.Single(sink.Events);
+        Assert.Equal(LogEventLevel.Warning, logEvent.Level);
+    }
 
     private static LogEvent CreateEvent(string? path, LogEventLevel level = LogEventLevel.Information)
     {

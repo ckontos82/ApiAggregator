@@ -574,6 +574,59 @@ public sealed class AggregationServiceTests
     }
 
     [Fact]
+    public async Task AggregateAsync_UnexpectedProviderError_RecordsErrorAndUnavailable()
+    {
+        using var capture = new TelemetryCapture();
+
+        var nasa = CreateProvider(AggregationSource.Nasa, ContentCategory.Media);
+        nasa.Handler = _ => throw new InvalidOperationException("unreadable response");
+
+        var service = CreateService([nasa], telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal("error", duration.Tags["aggregator.outcome"]);
+
+        var result = Assert.Single(capture.Results.GetMeasurementSnapshot());
+        Assert.Equal("Unavailable", result.Tags["aggregator.provider.status"]);
+
+        var span = Assert.Single(capture.Activities);
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Single(span.Events, activityEvent => activityEvent.Name == "exception");
+    }
+
+    [Fact]
+    public async Task AggregateAsync_FailureAfterSuccessfulCall_IsNotRecordedAsProviderError()
+    {
+        using var capture = new TelemetryCapture();
+        var collector = new RecordingStatisticsCollector();
+
+        var gitHub = CreateProvider(AggregationSource.GitHub, ContentCategory.Repository);
+
+        var service = CreateService(
+            [gitHub],
+            cache: new ThrowingOnSetProviderCache(),
+            statisticsCollector: collector,
+            telemetry: capture.Telemetry);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AggregateAsync(
+                new AggregationQueryDto { Query = "apollo" },
+                CancellationToken.None));
+
+        // The provider call succeeded; the later failure must not add a
+        // second, failed record for the same call.
+        var record = Assert.Single(collector.Records);
+        Assert.True(record.Succeeded);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal("success", duration.Tags["aggregator.outcome"]);
+    }
+
+    [Fact]
     public async Task AggregateAsync_HttpFailureWithStale_RecordsDegraded()
     {
         using var capture = new TelemetryCapture();
