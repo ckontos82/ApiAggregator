@@ -159,7 +159,7 @@ that only appear at request time:
   and empty error status codes (404, 405, etc.) are returned as
   `application/problem+json` bodies rather than empty responses. The
   `traceId` in the body is a W3C trace context value
-  (`00-<trace-id>-<span-id>-01`); its `<trace-id>` segment matches the
+  (`00-<trace-id>-<span-id>-<flags>`); its `<trace-id>` segment matches the
   `TraceId` column of the corresponding log entries, so a reported error
   can be looked up directly.
 
@@ -210,9 +210,10 @@ successes, `Warning` for 4xx, and `Error` for 5xx or exceptions.
 
 Events are also forwarded to OpenTelemetry (see
 [Observability](#observability)); Serilog filters first, so the dashboard
-shows the same events as the console and SQL sinks. Forwarded messages are
-rendered with Serilog's default formatting, so string values appear quoted
-in the dashboard (`Provider "GitHub" returned ...`) while the console shows
+shows the same events as the console (the SQL sink additionally drops
+`Debug`). Forwarded messages are rendered with Serilog's default formatting,
+so string values appear quoted in the dashboard
+(`HTTP "GET" "/api/aggregation" responded 200 ...`) while the console shows
 them unquoted.
 
 ## Observability
@@ -232,7 +233,7 @@ solution. The dashboard shows:
   `/health` and `/alive` endpoints are mapped only in Development.
 
 The `<trace-id>` segment of the `traceId` in `ProblemDetails` error responses
-(`00-<trace-id>-<span-id>-01`) is the trace id shown in the dashboard, so an
+(`00-<trace-id>-<span-id>-<flags>`) is the trace id shown in the dashboard, so an
 error response leads directly to its trace.
 
 ### Custom telemetry
@@ -254,7 +255,7 @@ Metrics (durations in seconds):
 
 | Instrument | Type | Unit | Tags | Recorded when |
 |---|---|---|---|---|
-| `aggregator.provider.duration` | Histogram | `s` | `aggregator.source`, `aggregator.outcome` = `success` / `timeout` / `http_error` / `error` | A real external call completes (never on a cache hit) |
+| `aggregator.provider.duration` | Histogram | `s` | `aggregator.source`, `aggregator.outcome` = `success` / `timeout` / `http_error` / `error` | A live provider call succeeds, fails, or times out (never on a cache hit or caller cancellation) |
 | `aggregator.cache.lookups` | Counter | `{lookup}` | `aggregator.source`, `aggregator.cache.result` = `hit` / `miss` | Every fresh-cache lookup |
 | `aggregator.provider.results` | Counter | `{result}` | `aggregator.source`, `aggregator.provider.status` | Once per executed provider per request |
 
@@ -262,11 +263,11 @@ Metrics (durations in seconds):
 
 `ApiAggregator.ServiceDefaults` is the Aspire template with two parts removed:
 service discovery (the external APIs are addressed by absolute URLs) and the
-standard resilience handler on every `HttpClient`. That handler applies
-retries, a 10 s attempt timeout, and a 30 s total timeout, which would change
-the API's behaviour: providers have a 15 s timeout, the stale-cache fallback
-depends on it, and retries would inflate the provider statistics. Aspire is
-used here for observability only.
+standard resilience handler on every `HttpClient`. That handler applies a
+10 s attempt timeout, which would pre-empt the providers' own 15 s timeout so
+timeouts would no longer be reported as timeouts, and retries within a 30 s
+total budget, which would delay every failure and stale-cache fallback and
+skew the recorded durations. Aspire is used here for observability only.
 
 ## Project layout
 

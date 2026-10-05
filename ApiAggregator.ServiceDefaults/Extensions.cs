@@ -24,10 +24,11 @@ public static class Extensions
         builder.AddDefaultHealthChecks();
 
         // Deliberately omitted from the Aspire template: service discovery and the
-        // standard resilience handler on every HttpClient. The resilience handler
-        // (retries, 10 s attempt timeout, 30 s total) would change the providers'
-        // 15 s timeout behaviour, the stale-cache fallback, and inflate the provider
-        // statistics. Aspire is used here for observability only. Service discovery
+        // standard resilience handler on every HttpClient. Its 10 s attempt timeout
+        // would pre-empt the providers' own 15 s timeout, so timeouts would no
+        // longer be reported as timeouts; its retries (within a 30 s total budget)
+        // would delay every failure and stale-cache fallback and skew the recorded
+        // durations. Aspire is used here for observability only. Service discovery
         // is unused because the external APIs are addressed by absolute URLs.
 
         return builder;

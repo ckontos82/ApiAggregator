@@ -56,8 +56,8 @@ public static class AggregationServiceCollectionExtensions
 
         // Registered here, not in ServiceDefaults, so ServiceDefaults stays
         // generic and never has to reference the API project. These extension
-        // methods come from the OpenTelemetry package, available transitively
-        // through the ServiceDefaults reference.
+        // methods come from the OpenTelemetry SDK packages, which flow in
+        // transitively through the ServiceDefaults reference.
         services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddSource(AggregationTelemetry.Name));
         services.ConfigureOpenTelemetryMeterProvider(metrics => metrics.AddMeter(AggregationTelemetry.Name));
 

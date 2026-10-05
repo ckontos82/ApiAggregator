@@ -63,7 +63,7 @@ try
 
     app.UseAuthorization();
 
-    // /health and /alive (Development only), used by the Aspire AppHost.
+    // /health and /alive (Development only); the Aspire AppHost health-checks /health.
     app.MapDefaultEndpoints();
 
     app.MapControllers();

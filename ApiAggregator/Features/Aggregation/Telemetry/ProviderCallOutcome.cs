@@ -6,7 +6,7 @@ namespace ApiAggregator.Features.Aggregation.Telemetry;
 /// </summary>
 internal enum ProviderCallOutcome
 {
-    /// <summary>The call completed and returned items.</summary>
+    /// <summary>The call completed without error (possibly with zero items).</summary>
     Success,
 
     /// <summary>The call was cancelled by the provider's timeout.</summary>
