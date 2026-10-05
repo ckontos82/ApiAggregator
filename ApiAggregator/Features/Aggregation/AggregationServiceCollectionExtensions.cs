@@ -29,7 +29,8 @@ public static class AggregationServiceCollectionExtensions
     private const string NewsApiOptionsName = "NewsApi";
 
     /// <summary>
-    /// Adds the aggregation providers, caching, statistics, and services.
+    /// Adds the aggregation providers, caching, statistics, telemetry (the
+    /// provider span and metrics, registered with OpenTelemetry), and services.
     /// A provider whose configuration is missing (e.g. the NewsAPI key) is
     /// registered as a <see cref="Models.DisabledProvider"/> instead of
     /// failing startup.

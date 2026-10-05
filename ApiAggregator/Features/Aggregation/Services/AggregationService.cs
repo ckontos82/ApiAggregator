@@ -257,7 +257,7 @@ internal sealed class AggregationService(
         }
         catch (OperationCanceledException exception)
         {
-            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Timeout);
+            RecordCallCompleted(provider, startTimestamp, ProviderCallOutcome.Timeout);
             activity?.AddException(exception);
 
             // The caller token was not cancelled, so this is treated
@@ -271,7 +271,7 @@ internal sealed class AggregationService(
         }
         catch (HttpRequestException exception)
         {
-            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.HttpError);
+            RecordCallCompleted(provider, startTimestamp, ProviderCallOutcome.HttpError);
             activity?.AddException(exception);
 
             logger.LogWarning(
@@ -283,7 +283,7 @@ internal sealed class AggregationService(
         }
         catch (Exception exception)
         {
-            RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Error);
+            RecordCallCompleted(provider, startTimestamp, ProviderCallOutcome.Error);
             activity?.AddException(exception);
 
             logger.LogError(
@@ -294,7 +294,7 @@ internal sealed class AggregationService(
             return CreateFailureResult(provider, cacheKey, $"{provider.Source} could not return results.");
         }
 
-        var elapsed = RecordStatistics(provider, startTimestamp, ProviderCallOutcome.Success);
+        var elapsed = RecordCallCompleted(provider, startTimestamp, ProviderCallOutcome.Success);
 
         // Named properties, not string interpolation: Provider,
         // ItemCount and ElapsedMilliseconds land in their own columns
@@ -344,7 +344,12 @@ internal sealed class AggregationService(
         }
     }
 
-    private TimeSpan RecordStatistics(
+    /// <summary>
+    /// Measures a live provider call once and feeds the elapsed time to both
+    /// the statistics collector and the duration histogram, so the two
+    /// cannot disagree.
+    /// </summary>
+    private TimeSpan RecordCallCompleted(
         IAggregationProvider provider,
         long startTimestamp,
         ProviderCallOutcome outcome)
