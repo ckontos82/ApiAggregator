@@ -34,9 +34,9 @@ public static class SerilogRegistration
     }
 
     /// <summary>
-    /// Replaces the default logging providers with Serilog. The delegate
-    /// receives the built <see cref="IServiceProvider"/>, so sinks can
-    /// resolve services if they ever need to.
+    /// Makes Serilog the logging pipeline and forwards every event that
+    /// passes its filters to the logging providers registered after this
+    /// call (the OpenTelemetry provider from <c>AddServiceDefaults</c>).
     /// </summary>
     public static WebApplicationBuilder AddSerilogLogging(
         this WebApplicationBuilder builder)
@@ -52,16 +52,25 @@ public static class SerilogRegistration
             SelfLog.Enable(Console.Error);
         }
 
-        builder.Host.UseSerilog((context, _, loggerConfiguration) =>
-            Configure(
-                loggerConfiguration,
-                context.Configuration,
-                context.HostingEnvironment));
+        // CreateBuilder registers the Console, Debug, EventSource and
+        // EventLog providers, which would otherwise also receive every
+        // event Serilog forwards (duplicate console output). The only
+        // provider left after this is the OpenTelemetry one that
+        // AddServiceDefaults adds later, which sends logs to the dashboard.
+        builder.Logging.ClearProviders();
+
+        builder.Host.UseSerilog(
+            (context, _, loggerConfiguration) =>
+                Configure(
+                    loggerConfiguration,
+                    context.Configuration,
+                    context.HostingEnvironment),
+            writeToProviders: true);
 
         return builder;
     }
 
-    private static void Configure(
+    internal static void Configure(
         LoggerConfiguration loggerConfiguration,
         IConfiguration configuration,
         IHostEnvironment environment)
@@ -88,9 +97,10 @@ public static class SerilogRegistration
             .Enrich.WithProperty("Environment", environment.EnvironmentName)
             .Enrich.WithProperty("MachineName", Environment.MachineName)
 
-            // The docs UI issues a handful of requests per page load.
-            // Without this, half the log is Scalar fetching its own assets.
-            .Filter.ByExcluding(IsDocumentationRequest)
+            // The docs UI issues a handful of requests per page load, and
+            // the AppHost polls /health continuously. Without this, most of
+            // the log is Scalar fetching its own assets and health check pings.
+            .Filter.ByExcluding(IsRoutineNonApiEvent)
 
             .WriteTo.Console(outputTemplate: ConsoleTemplate);
 
@@ -98,10 +108,11 @@ public static class SerilogRegistration
     }
 
     /// <summary>
-    /// True for requests to the OpenAPI document or the Scalar UI and its
-    /// static assets. These say nothing about the API's behaviour.
+    /// True for requests to the OpenAPI document, the Scalar UI and its
+    /// static assets, or the health check endpoints.
+    /// These say nothing about the API's behaviour.
     /// </summary>
-    private static bool IsDocumentationRequest(LogEvent logEvent)
+    internal static bool IsNonApiRequest(LogEvent logEvent)
     {
         if (!logEvent.Properties.TryGetValue("RequestPath", out var value)
             || value is not ScalarValue { Value: string requestPath })
@@ -109,8 +120,35 @@ public static class SerilogRegistration
             return false;
         }
 
-        return requestPath.StartsWith("/scalar", StringComparison.OrdinalIgnoreCase)
-            || requestPath.StartsWith("/openapi", StringComparison.OrdinalIgnoreCase);
+        return StartsWithSegment(requestPath, "/scalar")
+            || StartsWithSegment(requestPath, "/openapi")
+            || StartsWithSegment(requestPath, "/health")
+            || StartsWithSegment(requestPath, "/alive");
+    }
+
+    /// <summary>
+    /// True for the routine traffic <see cref="IsNonApiRequest"/> describes,
+    /// below <see cref="LogEventLevel.Warning"/>. Warnings and errors from
+    /// those endpoints are kept: a failing health check (a 503 summary
+    /// line, or the health check service's own error) is exactly what the
+    /// log should show.
+    /// </summary>
+    internal static bool IsRoutineNonApiEvent(LogEvent logEvent)
+    {
+        return logEvent.Level < LogEventLevel.Warning
+            && IsNonApiRequest(logEvent);
+    }
+
+    /// <summary>
+    /// Whole-segment prefix match, so <c>/health</c> matches
+    /// <c>/health</c> and <c>/health/ready</c> but not <c>/healthz</c>.
+    /// Mirrors <c>PathString.StartsWithSegments</c>, which the tracing
+    /// filter in ServiceDefaults uses for the same endpoints.
+    /// </summary>
+    private static bool StartsWithSegment(string path, string segment)
+    {
+        return path.StartsWith(segment, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == segment.Length || path[segment.Length] == '/');
     }
 
     private static void AddSqlServerSink(
@@ -178,7 +216,7 @@ public static class SerilogRegistration
             new SqlColumn("MachineName", SqlDbType.NVarChar, dataLength: 64),
             new SqlColumn("RequestId", SqlDbType.NVarChar, dataLength: 64),
 
-            // The identifier the caller actually sees in an error response.
+            // The trace-id segment of the traceId returned in an error response.
             new SqlColumn("TraceId", SqlDbType.NVarChar, dataLength: 32),
             new SqlColumn("SpanId", SqlDbType.NVarChar, dataLength: 16),
 
@@ -186,7 +224,7 @@ public static class SerilogRegistration
             new SqlColumn("SearchQuery", SqlDbType.NVarChar, dataLength: 128),
 
             // "Elapsed" comes from the request-logging template,
-            // "ElapsedMilliseconds" from the per-provider Debug entry.
+            // "ElapsedMilliseconds" from the per-provider Information entry.
             new SqlColumn("Elapsed", SqlDbType.Float),
             new SqlColumn("ElapsedMilliseconds", SqlDbType.Float),
             new SqlColumn("StatusCode", SqlDbType.Int),

@@ -8,7 +8,10 @@ using ApiAggregator.Features.Aggregation.Providers.Nasa;
 using ApiAggregator.Features.Aggregation.Providers.NewsApi;
 using ApiAggregator.Features.Aggregation.Services;
 using ApiAggregator.Features.Aggregation.Statistics;
+using ApiAggregator.Features.Aggregation.Telemetry;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using System.Net.Http.Headers;
 
 namespace ApiAggregator.Features.Aggregation;
@@ -48,6 +51,15 @@ public static class AggregationServiceCollectionExtensions
         services.AddSingleton<IProviderStatisticsCollector, ProviderStatisticsCollector>();
 
         services.AddScoped<IAggregationService, AggregationService>();
+
+        services.AddSingleton<AggregationTelemetry>();
+
+        // Registered here, not in ServiceDefaults, so ServiceDefaults stays
+        // generic and never has to reference the API project. These extension
+        // methods come from the OpenTelemetry SDK packages, which flow in
+        // transitively through the ServiceDefaults reference.
+        services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddSource(AggregationTelemetry.Name));
+        services.ConfigureOpenTelemetryMeterProvider(metrics => metrics.AddMeter(AggregationTelemetry.Name));
 
         return services;
     }

@@ -11,8 +11,14 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // Replaces the default logging providers with Serilog.
+    // Serilog becomes the logging pipeline; filtered events are forwarded
+    // to the OpenTelemetry provider that AddServiceDefaults registers.
     builder.AddSerilogLogging();
+
+    // OpenTelemetry and health checks. Must stay after AddSerilogLogging: Serilog
+    // clears the logging providers, so the OTel logger provider has to be
+    // registered after that for logs to reach it.
+    builder.AddServiceDefaults();
 
     // Add services to the container.
 
@@ -56,6 +62,9 @@ try
     app.UseHttpsRedirection();
 
     app.UseAuthorization();
+
+    // /health and /alive (Development only); the Aspire AppHost health-checks /health.
+    app.MapDefaultEndpoints();
 
     app.MapControllers();
 

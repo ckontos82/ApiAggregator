@@ -6,10 +6,15 @@ using ApiAggregator.Features.Aggregation.Models;
 using ApiAggregator.Features.Aggregation.Providers;
 using ApiAggregator.Features.Aggregation.Services;
 using ApiAggregator.Features.Aggregation.Statistics;
+using ApiAggregator.Features.Aggregation.Telemetry;
 using ApiAggregator.Tests.TestDoubles;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 
 namespace ApiAggregator.Tests;
 
@@ -17,6 +22,15 @@ public sealed class AggregationServiceTests
 {
     private static readonly DateTimeOffset BaseTime =
         new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+
+    // Tests using this instance run outside any TelemetryCapture trace, so
+    // no listener samples their activities: StartProviderActivity returns
+    // null and these tests exercise the no-activity path.
+    private static readonly AggregationTelemetry DefaultTelemetry = new(
+        new ServiceCollection()
+            .AddMetrics()
+            .BuildServiceProvider()
+            .GetRequiredService<IMeterFactory>());
 
     [Fact]
     public async Task AggregateAsync_MergesAllProviders_SortedByTimestampDescending()
@@ -463,18 +477,295 @@ public sealed class AggregationServiceTests
         Assert.Equal(TimeSpan.FromMilliseconds(150), record.Elapsed);
     }
 
+    [Fact]
+    public async Task AggregateAsync_FreshCacheHit_RecordsHitAndNoDuration()
+    {
+        using var capture = new TelemetryCapture();
+        var timeProvider = new FakeTimeProvider(BaseTime);
+        var cache = CreateRealCache(timeProvider);
+
+        var gitHub = CreateProvider(
+            AggregationSource.GitHub,
+            ContentCategory.Repository,
+            CreateItem(AggregationSource.GitHub, "cached", BaseTime));
+
+        var service = CreateService([gitHub], cache: cache, telemetry: capture.Telemetry);
+        var query = new AggregationQueryDto { Query = "apollo" };
+
+        await service.AggregateAsync(query, CancellationToken.None);
+        await service.AggregateAsync(query, CancellationToken.None);
+
+        var lookups = capture.CacheLookups.GetMeasurementSnapshot();
+        Assert.Equal(2, lookups.Count);
+        Assert.Equal("miss", lookups[0].Tags["aggregator.cache.result"]);
+        Assert.Equal("hit", lookups[1].Tags["aggregator.cache.result"]);
+        Assert.All(lookups, lookup =>
+            Assert.Equal("GitHub", lookup.Tags["aggregator.source"]));
+
+        Assert.Single(capture.Durations.GetMeasurementSnapshot());
+
+        var spans = capture.Activities;
+        Assert.Equal(2, spans.Count);
+        Assert.Equal(true, spans[^1].GetTagItem("aggregator.cache.hit"));
+    }
+
+    [Fact]
+    public async Task AggregateAsync_SuccessfulCall_RecordsSuccessDurationAndResult()
+    {
+        using var capture = new TelemetryCapture();
+        var timeProvider = new FakeTimeProvider(BaseTime);
+
+        var gitHub = CreateProvider(AggregationSource.GitHub, ContentCategory.Repository);
+        gitHub.Handler = _ =>
+        {
+            timeProvider.Advance(TimeSpan.FromMilliseconds(150));
+            return
+            [
+                CreateItem(AggregationSource.GitHub, "1", BaseTime),
+                CreateItem(AggregationSource.GitHub, "2", BaseTime)
+            ];
+        };
+
+        var service = CreateService(
+            [gitHub],
+            timeProvider: timeProvider,
+            telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal(0.15, duration.Value, precision: 10);
+        Assert.Equal("GitHub", duration.Tags["aggregator.source"]);
+        Assert.Equal("success", duration.Tags["aggregator.outcome"]);
+
+        var result = Assert.Single(capture.Results.GetMeasurementSnapshot());
+        Assert.Equal("Succeeded", result.Tags["aggregator.provider.status"]);
+
+        var span = Assert.Single(capture.Activities);
+        Assert.Equal(ActivityStatusCode.Unset, span.Status);
+        Assert.Equal(2, span.GetTagItem("aggregator.item_count"));
+    }
+
+    [Fact]
+    public async Task AggregateAsync_TimeoutWithoutStale_RecordsTimeoutAndUnavailable()
+    {
+        using var capture = new TelemetryCapture();
+
+        var nasa = CreateProvider(AggregationSource.Nasa, ContentCategory.Media);
+        nasa.Handler = _ => throw new TaskCanceledException("HttpClient timeout");
+
+        var service = CreateService([nasa], telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal("timeout", duration.Tags["aggregator.outcome"]);
+
+        var result = Assert.Single(capture.Results.GetMeasurementSnapshot());
+        Assert.Equal("Unavailable", result.Tags["aggregator.provider.status"]);
+
+        var span = Assert.Single(capture.Activities);
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Single(span.Events, activityEvent => activityEvent.Name == "exception");
+    }
+
+    [Fact]
+    public async Task AggregateAsync_UnexpectedProviderError_RecordsErrorAndUnavailable()
+    {
+        using var capture = new TelemetryCapture();
+
+        var nasa = CreateProvider(AggregationSource.Nasa, ContentCategory.Media);
+        nasa.Handler = _ => throw new InvalidOperationException("unreadable response");
+
+        var service = CreateService([nasa], telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal("error", duration.Tags["aggregator.outcome"]);
+
+        var result = Assert.Single(capture.Results.GetMeasurementSnapshot());
+        Assert.Equal("Unavailable", result.Tags["aggregator.provider.status"]);
+
+        var span = Assert.Single(capture.Activities);
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Single(span.Events, activityEvent => activityEvent.Name == "exception");
+    }
+
+    [Fact]
+    public async Task AggregateAsync_FailureAfterSuccessfulCall_IsNotRecordedAsProviderError()
+    {
+        using var capture = new TelemetryCapture();
+        var collector = new RecordingStatisticsCollector();
+
+        var gitHub = CreateProvider(AggregationSource.GitHub, ContentCategory.Repository);
+
+        var service = CreateService(
+            [gitHub],
+            cache: new ThrowingOnSetProviderCache(),
+            statisticsCollector: collector,
+            telemetry: capture.Telemetry);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AggregateAsync(
+                new AggregationQueryDto { Query = "apollo" },
+                CancellationToken.None));
+
+        // The provider call succeeded; the later failure must not add a
+        // second, failed record for the same call.
+        var record = Assert.Single(collector.Records);
+        Assert.True(record.Succeeded);
+
+        var duration = Assert.Single(capture.Durations.GetMeasurementSnapshot());
+        Assert.Equal("success", duration.Tags["aggregator.outcome"]);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_HttpFailureWithStale_RecordsDegraded()
+    {
+        using var capture = new TelemetryCapture();
+        var timeProvider = new FakeTimeProvider(BaseTime);
+        var cache = CreateRealCache(timeProvider);
+
+        var gitHub = CreateProvider(
+            AggregationSource.GitHub,
+            ContentCategory.Repository,
+            CreateItem(AggregationSource.GitHub, "cached", BaseTime));
+
+        var service = CreateService([gitHub], cache: cache, telemetry: capture.Telemetry);
+        var query = new AggregationQueryDto { Query = "apollo" };
+
+        await service.AggregateAsync(query, CancellationToken.None);
+
+        timeProvider.Advance(TimeSpan.FromMinutes(5));
+        gitHub.Handler = _ => throw new HttpRequestException("down");
+
+        await service.AggregateAsync(query, CancellationToken.None);
+
+        var durations = capture.Durations.GetMeasurementSnapshot();
+        Assert.Equal(2, durations.Count);
+        Assert.Equal("http_error", durations[^1].Tags["aggregator.outcome"]);
+
+        var results = capture.Results.GetMeasurementSnapshot();
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Degraded", results[^1].Tags["aggregator.provider.status"]);
+
+        var spans = capture.Activities;
+        Assert.Equal(2, spans.Count);
+        Assert.Equal(ActivityStatusCode.Error, spans[^1].Status);
+    }
+
+    [Fact]
+    public async Task AggregateAsync_DisabledProvider_ProducesNoTelemetry()
+    {
+        using var capture = new TelemetryCapture();
+
+        var gitHub = CreateProvider(AggregationSource.GitHub, ContentCategory.Repository);
+        var disabled = new DisabledProvider(
+            AggregationSource.NewsApi,
+            ContentCategory.Article,
+            "NewsApi requires an API key.");
+
+        var service = CreateService(
+            [gitHub],
+            disabledProviders: [disabled],
+            telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var spans = capture.Activities;
+        Assert.NotEmpty(spans);
+        Assert.All(spans, span =>
+            Assert.Equal("GitHub", span.GetTagItem("aggregator.source")));
+
+        AssertAllMeasurementsFromGitHub(capture.CacheLookups.GetMeasurementSnapshot());
+        AssertAllMeasurementsFromGitHub(capture.Durations.GetMeasurementSnapshot());
+        AssertAllMeasurementsFromGitHub(capture.Results.GetMeasurementSnapshot());
+    }
+
+    [Fact]
+    public async Task AggregateAsync_ParallelProviders_EachGetSpanUnderRequest()
+    {
+        using var capture = new TelemetryCapture();
+
+        var gitHub = CreateProvider(AggregationSource.GitHub, ContentCategory.Repository);
+        var nasa = CreateProvider(AggregationSource.Nasa, ContentCategory.Media);
+
+        var service = CreateService([gitHub, nasa], telemetry: capture.Telemetry);
+
+        await service.AggregateAsync(
+            new AggregationQueryDto { Query = "apollo" },
+            CancellationToken.None);
+
+        var spans = capture.Activities;
+        Assert.Equal(2, spans.Count);
+        Assert.Equal(
+            ["GitHub", "Nasa"],
+            spans
+                .Select(span => (string?)span.GetTagItem("aggregator.source"))
+                .Order());
+        Assert.All(spans, span =>
+            Assert.Equal(capture.Parent.SpanId, span.ParentSpanId));
+    }
+
+    [Fact]
+    public async Task AggregateAsync_CallerCancellation_SpanNotErrorAndNoResultMetric()
+    {
+        using var capture = new TelemetryCapture();
+        using var cancellationSource = new CancellationTokenSource();
+
+        var nasa = CreateProvider(AggregationSource.Nasa, ContentCategory.Media);
+        nasa.Handler = _ =>
+        {
+            cancellationSource.Cancel();
+            throw new OperationCanceledException(cancellationSource.Token);
+        };
+
+        var service = CreateService([nasa], telemetry: capture.Telemetry);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.AggregateAsync(
+                new AggregationQueryDto { Query = "apollo" },
+                cancellationSource.Token));
+
+        var span = Assert.Single(capture.Activities);
+        Assert.NotEqual(ActivityStatusCode.Error, span.Status);
+        Assert.Empty(span.Events);
+        Assert.Empty(capture.Results.GetMeasurementSnapshot());
+        Assert.Empty(capture.Durations.GetMeasurementSnapshot());
+    }
+
+    private static void AssertAllMeasurementsFromGitHub<T>(
+        IReadOnlyList<CollectedMeasurement<T>> measurements)
+        where T : struct
+    {
+        Assert.NotEmpty(measurements);
+        Assert.All(measurements, measurement =>
+            Assert.Equal("GitHub", measurement.Tags["aggregator.source"]));
+    }
+
     private static AggregationService CreateService(
         IReadOnlyList<IAggregationProvider> providers,
         IReadOnlyList<DisabledProvider>? disabledProviders = null,
         IProviderCache? cache = null,
         IProviderStatisticsCollector? statisticsCollector = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        AggregationTelemetry? telemetry = null)
     {
         return new AggregationService(
             providers,
             disabledProviders ?? [],
             cache ?? new NoOpProviderCache(),
             statisticsCollector ?? new RecordingStatisticsCollector(),
+            telemetry ?? DefaultTelemetry,
             timeProvider ?? TimeProvider.System,
             NullLogger<AggregationService>.Instance);
     }

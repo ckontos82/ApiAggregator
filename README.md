@@ -41,6 +41,22 @@ explanatory message, and requests that explicitly ask for it return
 ### Run
 
 ```bash
+dotnet run --project ApiAggregator.AppHost
+```
+
+This starts the API under the Aspire AppHost, which hosts the Aspire Dashboard
+(traces, logs, metrics; see [Observability](#observability)). The AppHost
+prints a dashboard login URL, with its token, to the console; open it in a
+browser. In Visual Studio, set `ApiAggregator.AppHost` as the startup project
+and press F5, which opens the dashboard automatically. The
+AppHost locates the dashboard and orchestrator from the Aspire bundle in the
+user profile (`~/.aspire/bundle`); if it is missing, the first build installs
+it automatically, which needs network access. No container runtime is
+required because the AppHost has only a project resource.
+
+To run the API alone, with no telemetry export:
+
+```bash
 dotnet run --project ApiAggregator
 ```
 
@@ -142,8 +158,10 @@ that only appear at request time:
 - **Unexpected errors return RFC 7807 responses.** Unhandled exceptions
   and empty error status codes (404, 405, etc.) are returned as
   `application/problem+json` bodies rather than empty responses. The
-  `traceId` in the body matches the `TraceId` column of the corresponding
-  log entries, so a reported error can be looked up directly.
+  `traceId` in the body is a W3C trace context value
+  (`00-<trace-id>-<span-id>-<flags>`); its `<trace-id>` segment matches the
+  `TraceId` column of the corresponding log entries, so a reported error
+  can be looked up directly.
 
 ### Caching
 
@@ -182,11 +200,74 @@ event is kept as JSON in the `LogEvent` column.
 
 The default connection string targets LocalDB; the database and table are
 created automatically on first run. If the connection string is missing,
-the application still starts and logs to the console only. Requests to the
-Scalar UI and the OpenAPI document are excluded from the log.
+the application still starts and logs to the console only. Routine requests
+to the Scalar UI, the OpenAPI document, and the health check endpoints are
+excluded from the log; warnings and errors from those endpoints (such as a
+failing health check) are kept.
 
 Each HTTP request produces one summary line, logged at `Information` for
 successes, `Warning` for 4xx, and `Error` for 5xx or exceptions.
+
+Events are also forwarded to OpenTelemetry (see
+[Observability](#observability)); Serilog filters first, so the dashboard
+shows the same events as the console (the SQL sink additionally drops
+`Debug`). Forwarded messages are rendered with Serilog's default formatting,
+so string values appear quoted in the dashboard
+(`HTTP "GET" "/api/aggregation" responded 200 ...`) while the console shows
+them unquoted.
+
+## Observability
+
+`ApiAggregator.AppHost` runs the API under Aspire and hosts the Aspire
+Dashboard, a developer tool for local use rather than a production monitoring
+solution. The dashboard shows:
+
+- **Traces:** one `GET /api/aggregation` request appears as a single trace:
+  the ASP.NET Core request span, one `aggregation.provider` span per executed
+  provider running in parallel, and the outgoing `HttpClient` spans nested
+  under each provider span.
+- **Structured logs:** the Serilog events, linked to their trace.
+- **Metrics:** the runtime, ASP.NET Core, and `HttpClient` metrics, plus the
+  custom metrics below.
+- **Health:** the `api` resource is reported healthy through `/health`. The
+  `/health` and `/alive` endpoints are mapped only in Development.
+
+The `<trace-id>` segment of the `traceId` in `ProblemDetails` error responses
+(`00-<trace-id>-<span-id>-<flags>`) is the trace id shown in the dashboard, so an
+error response leads directly to its trace.
+
+### Custom telemetry
+
+The `ApiAggregator` activity source and meter are defined in
+`Features/Aggregation/Telemetry`. Tags are low-cardinality only; the search
+query is never a tag.
+
+Span, started for each executed provider (a disabled provider produces none):
+
+| Aspect | Value |
+|---|---|
+| Operation name | `aggregation.provider` |
+| Display name | `{Source} provider`, e.g. `GitHub provider` |
+| Tags | `aggregator.source`, `aggregator.cache.hit` (bool), `aggregator.provider.status` (`Succeeded` / `Degraded` / `Unavailable`), `aggregator.item_count` |
+| On failure | Status `Error` with the error message, and the exception recorded as a span event. This also applies to `Degraded`: the call failed even though stale data was served. |
+
+Metrics (durations in seconds):
+
+| Instrument | Type | Unit | Tags | Recorded when |
+|---|---|---|---|---|
+| `aggregator.provider.duration` | Histogram | `s` | `aggregator.source`, `aggregator.outcome` = `success` / `timeout` / `http_error` / `error` | A live provider call succeeds, fails, or times out (never on a cache hit or caller cancellation) |
+| `aggregator.cache.lookups` | Counter | `{lookup}` | `aggregator.source`, `aggregator.cache.result` = `hit` / `miss` | Every fresh-cache lookup |
+| `aggregator.provider.results` | Counter | `{result}` | `aggregator.source`, `aggregator.provider.status` | Once per executed provider per request |
+
+### Why there is no standard resilience handler
+
+`ApiAggregator.ServiceDefaults` is the Aspire template with two parts removed:
+service discovery (the external APIs are addressed by absolute URLs) and the
+standard resilience handler on every `HttpClient`. That handler applies a
+10 s attempt timeout, which would pre-empt the providers' own 15 s timeout so
+timeouts would no longer be reported as timeouts, and retries within a 30 s
+total budget, which would delay every failure and stale-cache fallback and
+skew the recorded durations. Aspire is used here for observability only.
 
 ## Project layout
 
@@ -199,12 +280,15 @@ ApiAggregator/
     Providers/       One folder per external API (GitHub, Nasa, NewsApi)
     Caching/         Fresh/stale in-memory provider cache
     Statistics/      In-memory per-provider request statistics
+    Telemetry/       Custom span and metrics (AggregationTelemetry)
     DTOs/            Request/response contracts
     Models/          Internal domain models
     Enums/           Sources, categories, statuses, sort options
   Infrastructure/
     Logging/         Serilog registration and trace-context enricher
-ApiAggregator.Tests/ xUnit unit tests
+ApiAggregator.AppHost/            Aspire AppHost (runs the API, hosts the dashboard)
+ApiAggregator.ServiceDefaults/    OpenTelemetry and health check defaults
+ApiAggregator.Tests/              xUnit unit tests
 ```
 
 Adding a provider means implementing `IAggregationProvider`, mapping its
